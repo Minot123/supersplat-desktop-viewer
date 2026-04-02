@@ -1,0 +1,26 @@
+{
+  "name": "tauri-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "prepare:viewer": "node scripts/prepare-viewer.mjs",
+    "dev": "npm run prepare:viewer && vite",
+    "build": "npm run prepare:viewer && tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev:win": "scripts\\run-tauri.cmd dev",
+    "dist": "scripts\\run-tauri.cmd build"
+  },
+  "dependencies": {
+    "@playcanvas/supersplat-viewer": "^1.19.1",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.6.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
+  }
+}

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/viewer/index.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SuperSplat Desktop Viewer Tauri</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div class="viewer-viewport" id="viewerViewport"></div>
+
+    <div class="app-shell">
+      <header class="toolbar">
+        <div class="toolbar__brand">
+          <div class="toolbar__eyebrow">Offline desktop viewer</div>
+          <div class="toolbar__title">SuperSplat Desktop Viewer Tauri</div>
+        </div>
+
+        <div class="toolbar__meta" id="fileMeta" hidden>
+          <span class="toolbar__label">Файл</span>
+          <span class="toolbar__value" id="fileName">Не выбран</span>
+          <span class="toolbar__subvalue" id="filePath">Путь недоступен</span>
+        </div>
+
+        <div class="toolbar__actions">
+          <div class="toolbar__state" id="viewerStateText">Выберите локальную сцену для просмотра</div>
+          <div class="status-badge" id="statusBadge">Ожидание файла</div>
+          <button class="button button--primary" id="openFileButton" type="button">Открыть файл</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="empty-state" id="emptyState">
+          <div class="empty-state__panel">
+            <div class="empty-state__kicker">Tauri v1</div>
+            <h1 class="empty-state__title">Локальный просмотрщик 3D Gaussian Splat сцен</h1>
+            <p class="empty-state__copy">
+              Откройте локальный файл через системный диалог или перетащите сцену прямо в окно приложения.
+            </p>
+
+            <div class="empty-state__actions">
+              <button class="button button--primary" id="emptyOpenButton" type="button">Выбрать сцену</button>
+            </div>
+
+            <div class="empty-state__formats">
+              <span class="formats-label">Поддерживаемые расширения</span>
+              <div class="formats-list" id="formatsList"></div>
+              <p class="empty-state__note">
+                Ассоциация установщика регистрируется для <code>.ply</code> и <code>.sog</code>. Файлы
+                <code>.meta.json</code> и <code>.lod-meta.json</code> открываются через <code>Open File</code>,
+                drag-and-drop или <code>Open with...</code>, чтобы не перехватывать все обычные <code>.json</code>.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="loading-overlay" id="loadingOverlay" hidden>
+          <div class="loading-overlay__panel">
+            <div class="loading-overlay__eyebrow">Загрузка сцены</div>
+            <div class="loading-overlay__title" id="loadingTitle">Подготавливаем сцену</div>
+            <div class="loading-overlay__meta">
+              <span class="loading-overlay__percent" id="loadingPercent">...</span>
+              <span class="loading-overlay__caption" id="loadingCaption">Инициализируем viewer</span>
+            </div>
+            <div class="loading-overlay__track">
+              <div class="loading-overlay__fill" id="loadingFill"></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="message-banner" id="messageBanner" hidden></div>
+      </main>
+    </div>
+  </body>
+</html>
