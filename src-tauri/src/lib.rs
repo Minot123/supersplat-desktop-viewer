@@ -2,24 +2,49 @@ use serde::Serialize;
 use std::{
   collections::HashMap,
   env, fs,
-  io::Read,
+  io::{BufRead, BufReader, Read, Write},
+  net::{TcpListener, TcpStream},
   path::{Path, PathBuf},
-  sync::{atomic::{AtomicU64, Ordering}, Mutex},
+  sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+  },
+  thread,
+  time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const FILE_OPEN_EVENT: &str = "file-open";
 
-#[derive(Default)]
 struct AppState {
-  file_streams: Mutex<HashMap<u64, FileStreamSession>>,
-  next_stream_id: AtomicU64,
+  local_http_streams: Arc<Mutex<HashMap<u64, LocalHttpStreamSession>>>,
+  local_http_server: LocalHttpServer,
   pending_launch_file: Mutex<Option<OpenFilePayload>>,
 }
 
-struct FileStreamSession {
-  file: fs::File,
-  remaining_bytes: u64,
+impl AppState {
+  fn new() -> std::io::Result<Self> {
+    let local_http_streams = Arc::new(Mutex::new(HashMap::new()));
+    let local_http_server = LocalHttpServer::start(local_http_streams.clone())?;
+
+    Ok(Self {
+      local_http_streams,
+      local_http_server,
+      pending_launch_file: Mutex::new(None),
+    })
+  }
+}
+
+struct LocalHttpServer {
+  base_url: String,
+  next_session_id: AtomicU64,
+  session_token: String,
+}
+
+struct LocalHttpStreamSession {
+  content_type: &'static str,
+  path: PathBuf,
+  size_bytes: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -33,16 +58,263 @@ struct OpenFilePayload {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FileStreamOpenPayload {
+struct LocalHttpStreamOpenPayload {
   session_id: u64,
+  stream_url: String,
   size_bytes: u64,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FileStreamChunkPayload {
-  bytes: Vec<u8>,
-  done: bool,
+impl LocalHttpServer {
+  fn start(
+    streams: Arc<Mutex<HashMap<u64, LocalHttpStreamSession>>>,
+  ) -> std::io::Result<Self> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    listener.set_nonblocking(false)?;
+    let port = listener.local_addr()?.port();
+    let session_token = format!(
+      "{:x}-{:x}-{}",
+      SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos(),
+      std::process::id(),
+      port
+    );
+    let server_token = session_token.clone();
+
+    thread::spawn(move || {
+      for incoming in listener.incoming() {
+        match incoming {
+          Ok(stream) => {
+            let token = server_token.clone();
+            let request_streams = streams.clone();
+            thread::spawn(move || {
+              let _ = handle_local_http_client(stream, request_streams, &token);
+            });
+          }
+          Err(error) => {
+            eprintln!("local http accept error: {error}");
+            thread::sleep(Duration::from_millis(50));
+          }
+        }
+      }
+    });
+
+    Ok(Self {
+      base_url: format!("http://127.0.0.1:{port}"),
+      next_session_id: AtomicU64::new(0),
+      session_token,
+    })
+  }
+
+  fn register_stream(
+    &self,
+    streams: &Arc<Mutex<HashMap<u64, LocalHttpStreamSession>>>,
+    payload: &OpenFilePayload,
+  ) -> Option<LocalHttpStreamOpenPayload> {
+    let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed) + 1;
+    let stream = LocalHttpStreamSession {
+      content_type: get_content_type_for_name(&payload.name),
+      path: PathBuf::from(&payload.path),
+      size_bytes: payload.size_bytes,
+    };
+
+    streams.lock().ok()?.insert(session_id, stream);
+
+    Some(LocalHttpStreamOpenPayload {
+      session_id,
+      stream_url: format!(
+        "{}/scene/{}/{}/{}",
+        self.base_url,
+        session_id,
+        self.session_token,
+        encode_path_segment(&payload.name)
+      ),
+      size_bytes: payload.size_bytes,
+    })
+  }
+}
+
+fn get_content_type_for_name(file_name: &str) -> &'static str {
+  let normalized = file_name.replace('\\', "/").to_lowercase();
+  if normalized.ends_with(".ply") {
+    "application/octet-stream"
+  } else if normalized.ends_with(".sog") {
+    "application/octet-stream"
+  } else if normalized.ends_with(".meta.json") || normalized.ends_with(".lod-meta.json") {
+    "application/json"
+  } else {
+    "application/octet-stream"
+  }
+}
+
+fn encode_path_segment(value: &str) -> String {
+  let mut encoded = String::with_capacity(value.len());
+  for byte in value.as_bytes() {
+    let ch = *byte as char;
+    if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '~') {
+      encoded.push(ch);
+    } else {
+      encoded.push_str(&format!("%{:02X}", byte));
+    }
+  }
+  encoded
+}
+
+fn write_http_response(
+  stream: &mut TcpStream,
+  status: &str,
+  content_type: &str,
+  content_length: Option<u64>,
+  body: &[u8],
+) -> std::io::Result<()> {
+  let mut headers = format!(
+    "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nCache-Control: no-store\r\nConnection: close\r\n"
+  );
+
+  if let Some(length) = content_length {
+    headers.push_str(&format!("Content-Length: {length}\r\n"));
+  }
+
+  headers.push_str("\r\n");
+  stream.write_all(headers.as_bytes())?;
+  if !body.is_empty() {
+    stream.write_all(body)?;
+  }
+  stream.flush()
+}
+
+fn stream_scene_file(
+  stream: &mut TcpStream,
+  scene: LocalHttpStreamSession,
+) -> std::io::Result<()> {
+  let mut file = fs::File::open(&scene.path)?;
+  let headers = format!(
+    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+    scene.content_type, scene.size_bytes
+  );
+  stream.write_all(headers.as_bytes())?;
+
+  let mut buffer = vec![0_u8; 1024 * 1024];
+  loop {
+    let read = file.read(&mut buffer)?;
+    if read == 0 {
+      break;
+    }
+    stream.write_all(&buffer[..read])?;
+  }
+
+  stream.flush()
+}
+
+fn handle_local_http_client(
+  mut stream: TcpStream,
+  streams: Arc<Mutex<HashMap<u64, LocalHttpStreamSession>>>,
+  session_token: &str,
+) -> std::io::Result<()> {
+  stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+  stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+
+  let mut reader = BufReader::new(stream.try_clone()?);
+  let mut request_line = String::new();
+  reader.read_line(&mut request_line)?;
+
+  if request_line.trim().is_empty() {
+    return Ok(());
+  }
+
+  let mut request_parts = request_line.split_whitespace();
+  let method = request_parts.next().unwrap_or_default();
+  let target = request_parts.next().unwrap_or_default();
+
+  loop {
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    if line == "\r\n" || line == "\n" || line.is_empty() {
+      break;
+    }
+  }
+
+  if method.eq_ignore_ascii_case("OPTIONS") {
+    return write_http_response(&mut stream, "204 No Content", "text/plain", Some(0), b"");
+  }
+
+  if !method.eq_ignore_ascii_case("GET") {
+    return write_http_response(
+      &mut stream,
+      "405 Method Not Allowed",
+      "text/plain; charset=utf-8",
+      Some(18),
+      b"Method Not Allowed",
+    );
+  }
+
+  let path = target.split('?').next().unwrap_or_default();
+  let Some(route) = path.strip_prefix("/scene/") else {
+    return write_http_response(
+      &mut stream,
+      "404 Not Found",
+      "text/plain; charset=utf-8",
+      Some(9),
+      b"Not Found",
+    );
+  };
+  let mut route_parts = route.split('/');
+  let Some(session_id_text) = route_parts.next() else {
+    return write_http_response(
+      &mut stream,
+      "400 Bad Request",
+      "text/plain; charset=utf-8",
+      Some(11),
+      b"Bad Request",
+    );
+  };
+  let Some(token) = route_parts.next() else {
+    return write_http_response(
+      &mut stream,
+      "403 Forbidden",
+      "text/plain; charset=utf-8",
+      Some(9),
+      b"Forbidden",
+    );
+  };
+
+  if token != session_token {
+    return write_http_response(
+      &mut stream,
+      "403 Forbidden",
+      "text/plain; charset=utf-8",
+      Some(9),
+      b"Forbidden",
+    );
+  }
+
+  let Ok(session_id) = session_id_text.parse::<u64>() else {
+    return write_http_response(
+      &mut stream,
+      "400 Bad Request",
+      "text/plain; charset=utf-8",
+      Some(11),
+      b"Bad Request",
+    );
+  };
+
+  let scene = match streams.lock() {
+    Ok(mut guard) => guard.remove(&session_id),
+    Err(_) => None,
+  };
+
+  let Some(scene) = scene else {
+    return write_http_response(
+      &mut stream,
+      "404 Not Found",
+      "text/plain; charset=utf-8",
+      Some(9),
+      b"Not Found",
+    );
+  };
+
+  stream_scene_file(&mut stream, scene)
 }
 
 fn normalize_display_path(path: PathBuf) -> PathBuf {
@@ -140,68 +412,21 @@ fn resolve_file_path(app: AppHandle, file_path: String) -> Option<OpenFilePayloa
 }
 
 #[tauri::command]
-fn open_file_stream(
+fn open_local_http_stream(
   app: AppHandle,
   state: State<'_, AppState>,
   file_path: String,
-) -> Option<FileStreamOpenPayload> {
+) -> Option<LocalHttpStreamOpenPayload> {
   let payload = create_open_file_payload(&app, &file_path)?;
-  let file = fs::File::open(&payload.path).ok()?;
-  let session_id = state.next_stream_id.fetch_add(1, Ordering::Relaxed) + 1;
-
-  state.file_streams.lock().ok()?.insert(
-    session_id,
-    FileStreamSession {
-      file,
-      remaining_bytes: payload.size_bytes,
-    },
-  );
-
-  Some(FileStreamOpenPayload {
-    session_id,
-    size_bytes: payload.size_bytes,
-  })
-}
-
-#[tauri::command]
-fn read_file_stream_chunk(
-  state: State<'_, AppState>,
-  session_id: u64,
-  chunk_size: usize,
-) -> Option<FileStreamChunkPayload> {
-  let mut sessions = state.file_streams.lock().ok()?;
-  let session = sessions.get_mut(&session_id)?;
-
-  let safe_chunk_size = chunk_size.clamp(16 * 1024, 512 * 1024);
-  if session.remaining_bytes == 0 {
-    sessions.remove(&session_id);
-    return Some(FileStreamChunkPayload {
-      bytes: Vec::new(),
-      done: true,
-    });
-  }
-
-  let requested = usize::try_from(session.remaining_bytes.min(safe_chunk_size as u64)).ok()?;
-  let mut buffer = vec![0_u8; requested];
-  let bytes_read = session.file.read(&mut buffer).ok()?;
-  buffer.truncate(bytes_read);
-  session.remaining_bytes = session.remaining_bytes.saturating_sub(bytes_read as u64);
-
-  let done = session.remaining_bytes == 0 || bytes_read == 0;
-  if done {
-    sessions.remove(&session_id);
-  }
-
-  Some(FileStreamChunkPayload {
-    bytes: buffer,
-    done,
-  })
-}
-
-#[tauri::command]
-fn close_file_stream(state: State<'_, AppState>, session_id: u64) -> bool {
   state
-    .file_streams
+    .local_http_server
+    .register_stream(&state.local_http_streams, &payload)
+}
+
+#[tauri::command]
+fn close_local_http_stream(state: State<'_, AppState>, session_id: u64) -> bool {
+  state
+    .local_http_streams
     .lock()
     .map(|mut sessions| sessions.remove(&session_id).is_some())
     .unwrap_or(false)
@@ -214,6 +439,7 @@ fn report_renderer_error(message: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  let app_state = AppState::new().expect("failed to initialize localhost streaming server");
   tauri::Builder::default()
     .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
       let launch_cwd = PathBuf::from(cwd);
@@ -227,7 +453,7 @@ pub fn run() {
       }
     }))
     .plugin(tauri_plugin_dialog::init())
-    .manage(AppState::default())
+    .manage(app_state)
     .setup(|app| {
       let launch_cwd = env::current_dir().ok();
       if let Some(payload) =
@@ -240,10 +466,9 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
-      close_file_stream,
+      close_local_http_stream,
       get_launch_file,
-      open_file_stream,
-      read_file_stream_chunk,
+      open_local_http_stream,
       resolve_file_path,
       report_renderer_error
     ])

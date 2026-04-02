@@ -1,5 +1,5 @@
 import './styles.css';
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { SUPPORTED_FILE_LABELS, type OpenFilePayload } from './shared/files';
@@ -118,14 +118,10 @@ type PreparedContent = {
   dispose: () => Promise<void>;
 };
 
-type FileStreamOpenPayload = {
+type LocalHttpStreamOpenPayload = {
   sessionId: number;
+  streamUrl: string;
   sizeBytes: number;
-};
-
-type FileStreamChunkPayload = {
-  bytes: number[];
-  done: boolean;
 };
 
 declare global {
@@ -425,16 +421,13 @@ const setLanguage = (language: Language) => {
 };
 
 const getLaunchFile = () => invoke<OpenFilePayload | null>('get_launch_file');
-const openFileStream = (filePath: string) =>
-  invoke<FileStreamOpenPayload | null>('open_file_stream', { filePath });
-const readFileStreamChunk = (sessionId: number, chunkSize: number) =>
-  invoke<FileStreamChunkPayload | null>('read_file_stream_chunk', { sessionId, chunkSize });
+const openLocalHttpStream = (filePath: string) =>
+  invoke<LocalHttpStreamOpenPayload | null>('open_local_http_stream', { filePath });
 const resolveFilePath = (filePath: string) =>
   invoke<OpenFilePayload | null>('resolve_file_path', { filePath });
-const closeFileStream = (sessionId: number) => invoke<boolean>('close_file_stream', { sessionId });
+const closeLocalHttpStream = (sessionId: number) =>
+  invoke<boolean>('close_local_http_stream', { sessionId });
 const reportRendererError = (message: string) => invoke('report_renderer_error', { message });
-
-const FILE_STREAM_CHUNK_SIZE = 256 * 1024;
 
 const formatDuration = (durationMs: number) => {
   if (durationMs < 1000) {
@@ -1572,24 +1565,13 @@ const waitForViewerCleanup = async () => {
   });
 };
 
-const getStreamContentType = (fileName: string) => {
-  const normalizedName = fileName.toLowerCase();
-  if (normalizedName.endsWith('.json')) {
-    return 'application/json';
-  }
-
-  return 'application/octet-stream';
-};
-
 const createPreparedContent = async (payload: OpenFilePayload): Promise<PreparedContent> => {
-  const streamSession = await openFileStream(payload.path);
+  const streamSession = await openLocalHttpStream(payload.path);
   if (!streamSession) {
     throw new Error(t('streamOpenFailed'));
   }
 
-  const contentUrl = convertFileSrc(payload.path);
   let disposed = false;
-  let readInFlight = false;
 
   const dispose = async () => {
     if (disposed) {
@@ -1598,54 +1580,15 @@ const createPreparedContent = async (payload: OpenFilePayload): Promise<Prepared
 
     disposed = true;
     try {
-      await closeFileStream(streamSession.sessionId);
+      await closeLocalHttpStream(streamSession.sessionId);
     } catch {}
   };
 
-  const body = new ReadableStream<Uint8Array>({
-    cancel: async () => {
-      await dispose();
-    },
-    pull: async (controller) => {
-      if (disposed || readInFlight) {
-        return;
-      }
-
-      readInFlight = true;
-
-      try {
-        const chunk = await readFileStreamChunk(streamSession.sessionId, FILE_STREAM_CHUNK_SIZE);
-        if (!chunk) {
-          throw new Error(state.language === 'ru' ? 'Поток чтения локального файла завершился неожиданно.' : 'Local file stream ended unexpectedly.');
-        }
-
-        if (chunk.bytes.length > 0) {
-          controller.enqueue(Uint8Array.from(chunk.bytes));
-        }
-
-        if (chunk.done) {
-          await dispose();
-          controller.close();
-        }
-      } catch (error) {
-        await dispose();
-        controller.error(error);
-      } finally {
-        readInFlight = false;
-      }
-    }
-  });
-
   return {
-    contentUrl,
-    contents: Promise.resolve(
-      new Response(body, {
-        headers: {
-          'content-length': `${streamSession.sizeBytes}`,
-          'content-type': getStreamContentType(payload.name)
-        }
-      })
-    ),
+    contentUrl: streamSession.streamUrl,
+    contents: fetch(streamSession.streamUrl, {
+      cache: 'no-store'
+    }),
     dispose
   };
 };
