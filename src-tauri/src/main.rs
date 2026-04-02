@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    tauri_viewer_lib::run()
+    supersplat_desktop_viewer_lib::run()
 }

@@ -1,4 +1,4 @@
-# SuperSplat Desktop Viewer Tauri
+# SuperSplat Desktop Viewer
 
 Лёгкий офлайн-просмотрщик сцен 3D Gaussian Splat для Windows на базе Tauri, TypeScript и `@playcanvas/supersplat-viewer`.
 
