@@ -1,6 +1,6 @@
 [package]
 name = "supersplat-desktop-viewer"
-version = "0.1.0"
+version = "0.1.15"
 description = "Offline Windows desktop viewer for 3D Gaussian Splat scenes."
 authors = ["Antigravity"]
 edition = "2021"

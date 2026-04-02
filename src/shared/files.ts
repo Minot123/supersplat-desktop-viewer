@@ -4,4 +4,5 @@ export type OpenFilePayload = {
   directory: string;
   name: string;
   path: string;
+  sizeBytes: number;
 };

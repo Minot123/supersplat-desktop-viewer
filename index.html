@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/viewer/index.css" />
@@ -13,44 +13,50 @@
 
     <div class="app-shell">
       <header class="toolbar">
-        <div class="toolbar__brand">
-          <div class="toolbar__eyebrow">Offline desktop viewer</div>
-          <div class="toolbar__title">SuperSplat Desktop Viewer</div>
+        <div class="toolbar__side toolbar__side--left">
+          <button class="menu-trigger" id="togglePanelButton" type="button" hidden>
+            <span class="menu-trigger__icon" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            <span class="menu-trigger__label" id="menuTriggerLabel">Menu</span>
+          </button>
         </div>
 
-        <div class="toolbar__meta" id="fileMeta" hidden>
-          <span class="toolbar__label">Файл</span>
-          <span class="toolbar__value" id="fileName">Не выбран</span>
-          <span class="toolbar__subvalue" id="filePath">Путь недоступен</span>
+        <div class="toolbar__center">
+          <div class="toolbar__title" id="fileName">SuperSplat Desktop Viewer</div>
+          <span class="toolbar__subvalue" id="filePath" hidden>Path unavailable</span>
         </div>
 
-        <div class="toolbar__actions">
-          <div class="toolbar__state" id="viewerStateText">Выберите локальную сцену для просмотра</div>
-          <div class="status-badge" id="statusBadge">Ожидание файла</div>
-          <button class="button button--primary" id="openFileButton" type="button">Открыть файл</button>
+        <div class="toolbar__side toolbar__side--right">
+          <div class="toolbar__stats" id="sceneStats">Open a local scene</div>
+          <button class="language-toggle" id="languageToggleButton" type="button">RU</button>
+          <div class="toolbar__state" id="viewerStateText" hidden>Select a local scene to preview</div>
+          <div class="status-badge" id="statusBadge" hidden>Waiting for file</div>
         </div>
       </header>
 
       <main class="workspace">
         <section class="empty-state" id="emptyState">
           <div class="empty-state__panel">
-            <div class="empty-state__kicker">Offline Windows Viewer</div>
-            <h1 class="empty-state__title">Локальный просмотрщик 3D Gaussian Splat сцен</h1>
-            <p class="empty-state__copy">
-              Откройте локальный файл через системный диалог или перетащите сцену прямо в окно приложения.
+            <div class="empty-state__kicker" id="emptyStateKicker">Offline Windows Viewer</div>
+            <h1 class="empty-state__title" id="emptyStateTitle">Local viewer for 3D Gaussian Splat scenes</h1>
+            <p class="empty-state__copy" id="emptyStateCopy">
+              Open a local file from the system dialog or drag a scene directly into the app window.
             </p>
 
             <div class="empty-state__actions">
-              <button class="button button--primary" id="emptyOpenButton" type="button">Выбрать сцену</button>
+              <button class="button button--primary" id="emptyOpenButton" type="button">Choose Scene</button>
             </div>
 
             <div class="empty-state__formats">
-              <span class="formats-label">Поддерживаемые расширения</span>
+              <span class="formats-label" id="formatsLabel">Supported extensions</span>
               <div class="formats-list" id="formatsList"></div>
-              <p class="empty-state__note">
-                Ассоциация установщика регистрируется для <code>.ply</code> и <code>.sog</code>. Файлы
-                <code>.meta.json</code> и <code>.lod-meta.json</code> открываются через <code>Open File</code>,
-                drag-and-drop или <code>Open with...</code>, чтобы не перехватывать все обычные <code>.json</code>.
+              <p class="empty-state__note" id="emptyStateNote">
+                Installer file association is registered for <code>.ply</code> and <code>.sog</code>. Files
+                <code>.meta.json</code> and <code>.lod-meta.json</code> open through <code>Open File</code>,
+                drag-and-drop, or <code>Open with...</code> so the app does not take over all regular <code>.json</code> files.
               </p>
             </div>
           </div>
@@ -58,17 +64,100 @@
 
         <section class="loading-overlay" id="loadingOverlay" hidden>
           <div class="loading-overlay__panel">
-            <div class="loading-overlay__eyebrow">Загрузка сцены</div>
-            <div class="loading-overlay__title" id="loadingTitle">Подготавливаем сцену</div>
+            <div class="loading-overlay__eyebrow" id="loadingEyebrow">Scene Loading</div>
+            <div class="loading-overlay__title" id="loadingTitle">Preparing scene</div>
             <div class="loading-overlay__meta">
               <span class="loading-overlay__percent" id="loadingPercent">...</span>
-              <span class="loading-overlay__caption" id="loadingCaption">Инициализируем viewer</span>
+              <span class="loading-overlay__caption" id="loadingCaption">Initializing viewer</span>
             </div>
             <div class="loading-overlay__track">
               <div class="loading-overlay__fill" id="loadingFill"></div>
             </div>
           </div>
         </section>
+
+        <aside class="camera-panel" id="cameraPanel" hidden>
+          <div class="camera-panel__eyebrow" id="cameraPanelEyebrow">SCENE SETTINGS</div>
+          <div class="camera-panel__divider"></div>
+
+          <div class="camera-panel__section">
+            <div class="camera-panel__section-title" id="fieldOfViewTitle">Field of View</div>
+            <label class="camera-field camera-field--fov">
+              <div class="camera-field__meta">
+                <span class="camera-field__label" aria-hidden="true"></span>
+                <div class="camera-field__value-box">
+                  <input class="camera-field__number" id="cameraFovNumber" type="number" min="20" max="120" step="0.1" />
+                </div>
+              </div>
+              <input class="camera-field__range" id="cameraFovRange" type="range" min="20" max="120" step="0.1" />
+            </label>
+          </div>
+
+          <div class="camera-panel__section">
+            <div class="camera-panel__section-title" id="rotationTitle">Rotation</div>
+            <div class="camera-panel__fields camera-panel__fields--compact">
+              <label class="camera-field camera-field--axis">
+                <div class="camera-field__meta">
+                  <span class="camera-field__axis">X</span>
+                  <div class="camera-field__value-box">
+                    <input class="camera-field__number" id="modelRotationXNumber" type="number" min="-180" max="180" step="0.1" />
+                  </div>
+                </div>
+                <input class="camera-field__range" id="modelRotationXRange" type="range" min="-180" max="180" step="0.1" />
+              </label>
+
+              <label class="camera-field camera-field--axis">
+                <div class="camera-field__meta">
+                  <span class="camera-field__axis">Y</span>
+                  <div class="camera-field__value-box">
+                    <input class="camera-field__number" id="modelRotationYNumber" type="number" min="-180" max="180" step="0.1" />
+                  </div>
+                </div>
+                <input class="camera-field__range" id="modelRotationYRange" type="range" min="-180" max="180" step="0.1" />
+              </label>
+
+              <label class="camera-field camera-field--axis">
+                <div class="camera-field__meta">
+                  <span class="camera-field__axis">Z</span>
+                  <div class="camera-field__value-box">
+                    <input class="camera-field__number" id="modelRotationZNumber" type="number" min="-180" max="180" step="0.1" />
+                  </div>
+                </div>
+                <input class="camera-field__range" id="modelRotationZRange" type="range" min="-180" max="180" step="0.1" />
+              </label>
+            </div>
+          </div>
+
+          <div class="camera-panel__section">
+            <div class="camera-panel__section-title" id="startCameraTitle">Start Camera</div>
+
+            <div class="vector-field">
+              <span class="vector-field__label" id="cameraPositionLabel">Position</span>
+              <div class="vector-field__inputs">
+                <input class="vector-field__input" id="cameraPositionXNumber" type="number" step="0.01" placeholder="X" />
+                <input class="vector-field__input" id="cameraPositionYNumber" type="number" step="0.01" placeholder="Y" />
+                <input class="vector-field__input" id="cameraPositionZNumber" type="number" step="0.01" placeholder="Z" />
+              </div>
+            </div>
+
+            <div class="vector-field">
+              <span class="vector-field__label" id="cameraTargetLabel">Target</span>
+              <div class="vector-field__inputs">
+                <input class="vector-field__input" id="cameraTargetXNumber" type="number" step="0.01" placeholder="X" />
+                <input class="vector-field__input" id="cameraTargetYNumber" type="number" step="0.01" placeholder="Y" />
+                <input class="vector-field__input" id="cameraTargetZNumber" type="number" step="0.01" placeholder="Z" />
+              </div>
+            </div>
+          </div>
+
+          <div class="camera-panel__actions camera-panel__actions--stack">
+            <button class="button button--ghost" id="openFileButton" type="button">Open File</button>
+            <div class="camera-panel__actions-row">
+              <button class="button button--ghost" id="frameSceneButton" type="button">Frame</button>
+              <button class="button button--ghost" id="resetViewButton" type="button">Reset</button>
+            </div>
+          </div>
+        </aside>
 
         <div class="message-banner" id="messageBanner" hidden></div>
       </main>

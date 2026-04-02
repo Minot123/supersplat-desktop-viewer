@@ -1,8 +1,10 @@
 use serde::Serialize;
 use std::{
+  collections::HashMap,
   env, fs,
+  io::Read,
   path::{Path, PathBuf},
-  sync::Mutex,
+  sync::{atomic::{AtomicU64, Ordering}, Mutex},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -10,7 +12,14 @@ const FILE_OPEN_EVENT: &str = "file-open";
 
 #[derive(Default)]
 struct AppState {
+  file_streams: Mutex<HashMap<u64, FileStreamSession>>,
+  next_stream_id: AtomicU64,
   pending_launch_file: Mutex<Option<OpenFilePayload>>,
+}
+
+struct FileStreamSession {
+  file: fs::File,
+  remaining_bytes: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -19,6 +28,21 @@ struct OpenFilePayload {
   directory: String,
   name: String,
   path: String,
+  size_bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileStreamOpenPayload {
+  session_id: u64,
+  size_bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileStreamChunkPayload {
+  bytes: Vec<u8>,
+  done: bool,
 }
 
 fn normalize_display_path(path: PathBuf) -> PathBuf {
@@ -71,6 +95,7 @@ fn create_open_file_payload<R: tauri::Runtime>(
     directory: resolved.parent()?.display().to_string(),
     name: resolved.file_name()?.to_string_lossy().into_owned(),
     path: resolved.display().to_string(),
+    size_bytes: fs::metadata(&resolved).ok()?.len(),
   })
 }
 
@@ -115,6 +140,74 @@ fn resolve_file_path(app: AppHandle, file_path: String) -> Option<OpenFilePayloa
 }
 
 #[tauri::command]
+fn open_file_stream(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  file_path: String,
+) -> Option<FileStreamOpenPayload> {
+  let payload = create_open_file_payload(&app, &file_path)?;
+  let file = fs::File::open(&payload.path).ok()?;
+  let session_id = state.next_stream_id.fetch_add(1, Ordering::Relaxed) + 1;
+
+  state.file_streams.lock().ok()?.insert(
+    session_id,
+    FileStreamSession {
+      file,
+      remaining_bytes: payload.size_bytes,
+    },
+  );
+
+  Some(FileStreamOpenPayload {
+    session_id,
+    size_bytes: payload.size_bytes,
+  })
+}
+
+#[tauri::command]
+fn read_file_stream_chunk(
+  state: State<'_, AppState>,
+  session_id: u64,
+  chunk_size: usize,
+) -> Option<FileStreamChunkPayload> {
+  let mut sessions = state.file_streams.lock().ok()?;
+  let session = sessions.get_mut(&session_id)?;
+
+  let safe_chunk_size = chunk_size.clamp(16 * 1024, 512 * 1024);
+  if session.remaining_bytes == 0 {
+    sessions.remove(&session_id);
+    return Some(FileStreamChunkPayload {
+      bytes: Vec::new(),
+      done: true,
+    });
+  }
+
+  let requested = usize::try_from(session.remaining_bytes.min(safe_chunk_size as u64)).ok()?;
+  let mut buffer = vec![0_u8; requested];
+  let bytes_read = session.file.read(&mut buffer).ok()?;
+  buffer.truncate(bytes_read);
+  session.remaining_bytes = session.remaining_bytes.saturating_sub(bytes_read as u64);
+
+  let done = session.remaining_bytes == 0 || bytes_read == 0;
+  if done {
+    sessions.remove(&session_id);
+  }
+
+  Some(FileStreamChunkPayload {
+    bytes: buffer,
+    done,
+  })
+}
+
+#[tauri::command]
+fn close_file_stream(state: State<'_, AppState>, session_id: u64) -> bool {
+  state
+    .file_streams
+    .lock()
+    .map(|mut sessions| sessions.remove(&session_id).is_some())
+    .unwrap_or(false)
+}
+
+#[tauri::command]
 fn report_renderer_error(message: String) {
   eprintln!("renderer error: {message}");
 }
@@ -147,7 +240,10 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+      close_file_stream,
       get_launch_file,
+      open_file_stream,
+      read_file_stream_chunk,
       resolve_file_path,
       report_renderer_error
     ])
