@@ -1,6 +1,6 @@
 [package]
 name = "supersplat-desktop-viewer"
-version = "0.1.17"
+version = "0.1.20"
 description = "Offline Windows desktop viewer for 3D Gaussian Splat scenes."
 authors = ["Antigravity"]
 edition = "2021"
@@ -23,3 +23,4 @@ tauri-plugin-dialog = "2.6.0"
 tauri-plugin-single-instance = "2.4.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -310,7 +310,7 @@ const TEXT = {
   startCameraTitle: 'Start Camera',
   streamOpenFailed: 'Failed to open streamed local file.',
   streamingData: 'Loading scene data',
-  unsupportedFiles: 'Only local .ply, .sog, .meta.json and .lod-meta.json files are supported.',
+  unsupportedFiles: 'Only local .ply, .sog, .ssproj, .meta.json and .lod-meta.json files are supported.',
   viewerError: 'Viewer reported an error while opening the local scene',
   viewerInit: 'Initializing PlayCanvas viewer',
   waitCurrentLoad: 'Wait for the current scene to finish loading.',
@@ -1550,7 +1550,7 @@ const openFromDialog = async () => {
   const selected = await openDialog({
     filters: [
       {
-        extensions: ['ply', 'sog', 'json'],
+        extensions: ['ply', 'sog', 'ssproj', 'json'],
         name: '3DGS scenes'
       }
     ],

@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::{
   collections::HashMap,
   env, fs,
-  io::{BufRead, BufReader, Read, Write},
+  io::{BufRead, BufReader, ErrorKind, Read, Write},
   net::{TcpListener, TcpStream},
   path::{Path, PathBuf},
   sync::{
@@ -13,6 +13,7 @@ use std::{
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
+use zip::ZipArchive;
 
 const FILE_OPEN_EVENT: &str = "file-open";
 
@@ -43,13 +44,26 @@ struct LocalHttpServer {
 
 struct LocalHttpStreamSession {
   content_type: &'static str,
-  path: PathBuf,
+  source: LocalHttpStreamSource,
   size_bytes: u64,
+}
+
+enum LocalHttpStreamSource {
+  File(PathBuf),
+  SsprojPly { archive_path: PathBuf, entry_name: String },
+}
+
+struct ResolvedSceneSource {
+  content_name: String,
+  content_type: &'static str,
+  size_bytes: u64,
+  source: LocalHttpStreamSource,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenFilePayload {
+  content_name: String,
   directory: String,
   name: String,
   path: String,
@@ -111,11 +125,12 @@ impl LocalHttpServer {
     &self,
     streams: &Arc<Mutex<HashMap<u64, LocalHttpStreamSession>>>,
     payload: &OpenFilePayload,
+    scene: ResolvedSceneSource,
   ) -> Option<LocalHttpStreamOpenPayload> {
     let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed) + 1;
     let stream = LocalHttpStreamSession {
-      content_type: get_content_type_for_name(&payload.name),
-      path: PathBuf::from(&payload.path),
+      content_type: scene.content_type,
+      source: scene.source,
       size_bytes: payload.size_bytes,
     };
 
@@ -128,7 +143,7 @@ impl LocalHttpServer {
         self.base_url,
         session_id,
         self.session_token,
-        encode_path_segment(&payload.name)
+        encode_path_segment(&payload.content_name)
       ),
       size_bytes: payload.size_bytes,
     })
@@ -146,6 +161,56 @@ fn get_content_type_for_name(file_name: &str) -> &'static str {
   } else {
     "application/octet-stream"
   }
+}
+
+fn resolve_scene_source(file_path: &Path) -> Option<ResolvedSceneSource> {
+  let normalized = file_path.to_string_lossy().replace('\\', "/").to_lowercase();
+
+  if normalized.ends_with(".ssproj") {
+    return resolve_ssproj_scene_source(file_path);
+  }
+
+  let content_name = file_path.file_name()?.to_string_lossy().into_owned();
+  Some(ResolvedSceneSource {
+    content_name: content_name.clone(),
+    content_type: get_content_type_for_name(&content_name),
+    size_bytes: fs::metadata(file_path).ok()?.len(),
+    source: LocalHttpStreamSource::File(file_path.to_path_buf()),
+  })
+}
+
+fn resolve_ssproj_scene_source(file_path: &Path) -> Option<ResolvedSceneSource> {
+  let file = fs::File::open(file_path).ok()?;
+  let mut archive = ZipArchive::new(file).ok()?;
+
+  for index in 0..archive.len() {
+    let entry = archive.by_index(index).ok()?;
+    let entry_name = entry.name().to_string();
+    if entry_name.ends_with('/') {
+      continue;
+    }
+
+    if !entry_name.to_lowercase().ends_with(".ply") {
+      continue;
+    }
+
+    let content_name = Path::new(&entry_name)
+      .file_name()
+      .map(|value| value.to_string_lossy().into_owned())
+      .unwrap_or_else(|| entry_name.clone());
+
+    return Some(ResolvedSceneSource {
+      content_name: content_name.clone(),
+      content_type: "application/octet-stream",
+      size_bytes: entry.size(),
+      source: LocalHttpStreamSource::SsprojPly {
+        archive_path: file_path.to_path_buf(),
+        entry_name,
+      },
+    });
+  }
+
+  None
 }
 
 fn encode_path_segment(value: &str) -> String {
@@ -188,7 +253,6 @@ fn stream_scene_file(
   stream: &mut TcpStream,
   scene: LocalHttpStreamSession,
 ) -> std::io::Result<()> {
-  let mut file = fs::File::open(&scene.path)?;
   let headers = format!(
     "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
     scene.content_type, scene.size_bytes
@@ -196,12 +260,36 @@ fn stream_scene_file(
   stream.write_all(headers.as_bytes())?;
 
   let mut buffer = vec![0_u8; 1024 * 1024];
-  loop {
-    let read = file.read(&mut buffer)?;
-    if read == 0 {
-      break;
+  match scene.source {
+    LocalHttpStreamSource::File(path) => {
+      let mut file = fs::File::open(path)?;
+      loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+          break;
+        }
+        stream.write_all(&buffer[..read])?;
+      }
     }
-    stream.write_all(&buffer[..read])?;
+    LocalHttpStreamSource::SsprojPly {
+      archive_path,
+      entry_name,
+    } => {
+      let file = fs::File::open(archive_path)?;
+      let mut archive = ZipArchive::new(file)
+        .map_err(|error| std::io::Error::new(ErrorKind::InvalidData, error.to_string()))?;
+      let mut entry = archive
+        .by_name(&entry_name)
+        .map_err(|error| std::io::Error::new(ErrorKind::NotFound, error.to_string()))?;
+
+      loop {
+        let read = entry.read(&mut buffer)?;
+        if read == 0 {
+          break;
+        }
+        stream.write_all(&buffer[..read])?;
+      }
+    }
   }
 
   stream.flush()
@@ -337,6 +425,7 @@ fn is_supported_file(path: &Path) -> bool {
   let normalized = path.to_string_lossy().replace('\\', "/").to_lowercase();
   normalized.ends_with(".ply")
     || normalized.ends_with(".sog")
+    || normalized.ends_with(".ssproj")
     || normalized.ends_with(".meta.json")
     || normalized.ends_with(".lod-meta.json")
 }
@@ -362,12 +451,14 @@ fn create_open_file_payload<R: tauri::Runtime>(
   }
 
   allow_scene_scope(app, &resolved).ok()?;
+  let scene = resolve_scene_source(&resolved)?;
 
   Some(OpenFilePayload {
+    content_name: scene.content_name,
     directory: resolved.parent()?.display().to_string(),
     name: resolved.file_name()?.to_string_lossy().into_owned(),
     path: resolved.display().to_string(),
-    size_bytes: fs::metadata(&resolved).ok()?.len(),
+    size_bytes: scene.size_bytes,
   })
 }
 
@@ -418,9 +509,10 @@ fn open_local_http_stream(
   file_path: String,
 ) -> Option<LocalHttpStreamOpenPayload> {
   let payload = create_open_file_payload(&app, &file_path)?;
+  let scene = resolve_scene_source(Path::new(&payload.path))?;
   state
     .local_http_server
-    .register_stream(&state.local_http_streams, &payload)
+    .register_stream(&state.local_http_streams, &payload, scene)
 }
 
 #[tauri::command]
