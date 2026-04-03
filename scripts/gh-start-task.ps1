@@ -98,7 +98,16 @@ $fields = Get-ProjectFields -Owner $Owner -ProjectNumber $projectNumber
 Invoke-GhText -Arguments @("project", "item-add", "$projectNumber", "--owner", $Owner, "--url", $issueUrl) | Out-Null
 Start-Sleep -Milliseconds 400
 
-$itemId = Resolve-ProjectItemIdFromIssueUrl -Owner $Owner -ProjectNumber $projectNumber -IssueUrl $issueUrl
+$itemId = $null
+for ($attempt = 0; $attempt -lt 12; $attempt++) {
+  $itemId = Resolve-ProjectItemIdFromIssueUrl -Owner $Owner -ProjectNumber $projectNumber -IssueUrl $issueUrl
+  if ($itemId) {
+    break
+  }
+
+  Start-Sleep -Milliseconds 500
+}
+
 if (-not $itemId) {
   throw "Issue was added to the project, but item id could not be resolved."
 }
