@@ -1,0 +1,40 @@
+name: Research
+description: Investigate architecture, performance, or product decisions before implementation.
+title: "[Research]: "
+labels:
+  - type:research
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Research question
+      placeholder: What exactly do we need to learn or decide?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this matters now for the desktop viewer.
+      placeholder: Current constraints, upstream behavior, release pressure, performance goals.
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources / references
+      description: Links to upstream repos, docs, issues, crash dumps, benchmarks, or scenes.
+      placeholder: Links and notes.
+  - type: textarea
+    id: output
+    attributes:
+      label: Expected output
+      description: What should the agent produce after the research?
+      placeholder: Recommendation memo, implementation plan, benchmark table, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: session_memory
+    attributes:
+      label: Session memory
+      description: Running notes and interim findings.

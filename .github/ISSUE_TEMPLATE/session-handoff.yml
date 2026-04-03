@@ -1,0 +1,41 @@
+name: Session handoff
+description: Capture unfinished work so the next agent session can resume immediately.
+title: "[Handoff]: "
+labels:
+  - type:handoff
+body:
+  - type: input
+    id: parent_issue
+    attributes:
+      label: Parent issue
+      description: Link the main task issue if one exists.
+      placeholder: "#123"
+  - type: textarea
+    id: completed
+    attributes:
+      label: Completed in this session
+      placeholder: What actually landed?
+    validations:
+      required: true
+  - type: textarea
+    id: next_steps
+    attributes:
+      label: Next steps
+      placeholder: What should the next session do first?
+    validations:
+      required: true
+  - type: textarea
+    id: changed_files
+    attributes:
+      label: Changed files / modules
+      placeholder: Absolute repo paths or key modules.
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      placeholder: Builds, tests, smoke checks, manual QA steps.
+  - type: textarea
+    id: blockers
+    attributes:
+      label: Blockers / risks
+      placeholder: Missing credentials, repro assets, upstream limitations, crash paths.

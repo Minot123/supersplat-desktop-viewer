@@ -1,0 +1,48 @@
+name: Bug
+description: Broken behavior with repro steps and evidence.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current behavior
+      placeholder: What actually happens?
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      placeholder: What should happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Include exact files, commands, scene sizes, or UI steps.
+      placeholder: |
+        1. Open ...
+        2. Load ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs / crash evidence
+      description: Event log snippets, dumps, screenshots, timings, or release version.
+      placeholder: Dump path, error message, scene timing, release version.
+  - type: textarea
+    id: risk
+    attributes:
+      label: Regression risk
+      description: What nearby systems may break if we fix this?
+      placeholder: WebView2, loader path, viewer patching, release pipeline, etc.
+  - type: textarea
+    id: session_memory
+    attributes:
+      label: Session memory
+      description: Running notes for handoff between sessions.

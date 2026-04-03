@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Agent memory workflow
+    url: https://github.com/Minot123/supersplat-desktop-viewer/blob/main/docs/agent-memory.md
+    about: Read the repository workflow for task memory, handoff comments, and GitHub Project usage.

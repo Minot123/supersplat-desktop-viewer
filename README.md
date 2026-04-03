@@ -11,8 +11,8 @@ Lightweight offline Windows desktop viewer for 3D Gaussian Splat scenes, built w
 - Desktop camera and scene controls
 - Loading overlay and scene status UI
 - Session-level persistence for `Field of View` and model rotation
-- English UI by default with an in-app `EN/RU` language toggle
-- Streamed local file loading path for large scenes
+- English-only UI
+- Internal localhost streaming path for large scenes
 
 ## Requirements
 
@@ -43,53 +43,21 @@ Local artifacts are generated in:
 ## Notes
 
 - Generated folders such as `dist`, `public/viewer`, `public/licenses`, and `src-tauri/target` are not committed
-- Large-scene loading is tuned for stability first; the current local streaming path avoids the WebView2 crash seen on repeated heavy scene opens
+- Large-scene loading now uses an internal localhost streaming path to avoid the earlier WebView2 crash pattern seen on repeated heavy scene opens
 
----
+## Agent Memory Workflow
 
-## Русская версия
+This repository uses GitHub Issues and GitHub Projects as durable memory for agent-driven work.
 
-Лёгкий офлайн-просмотрщик сцен 3D Gaussian Splat для Windows на базе Tauri, TypeScript и `@playcanvas/supersplat-viewer`.
+- task context lives in Issues
+- cross-session state is stored in handoff comments
+- project status is tracked in a dedicated GitHub Project
+- helper scripts live in `scripts/`
 
-### Возможности
+See [docs/agent-memory.md](docs/agent-memory.md) for the full workflow.
 
-- Нативная Windows-обвязка на Tauri вместо Electron
-- Открытие `.ply`, `.sog`, `.meta.json`, `.lod-meta.json`
-- `Open with...`, drag-and-drop и системный file-open сценарий
-- Отключённое автопроигрывание и автокручение сцены
-- Управление камерой и сценой в desktop UI
-- Overlay загрузки и статусные состояния
-- Сессионное сохранение `Field of View` и поворота модели
-- Английский UI по умолчанию и переключатель `EN/RU` в приложении
-- Потоковый путь чтения локальных файлов для больших сцен
+Repository helpers:
 
-### Требования
-
-- Node.js
-- Rust toolchain
-- Windows SDK / MSVC Build Tools
-- Установленный WebView2 Runtime
-
-### Разработка
-
-```bash
-npm install
-npm run typecheck
-npm run build
-npm run dist
-```
-
-### Сборка
-
-- `npm run build` подготавливает viewer-assets и собирает frontend
-- `npm run dist` собирает Windows `exe` и NSIS installer
-
-Локальные артефакты появляются в:
-
-- `src-tauri/target/release/supersplat-desktop-viewer.exe`
-- `src-tauri/target/release/bundle/nsis/`
-
-### Примечания
-
-- Генерируемые папки `dist`, `public/viewer`, `public/licenses` и `src-tauri/target` не коммитятся
-- Загрузка больших сцен сейчас оптимизирована в первую очередь под стабильность; текущий потоковый путь чтения уводит приложение от WebView2-crash, который проявлялся при повторном открытии тяжёлых сцен
+- `scripts/gh-project-bootstrap.ps1`
+- `scripts/gh-start-task.ps1`
+- `scripts/gh-handoff.ps1`

@@ -140,20 +140,6 @@ input {
   white-space: nowrap;
 }
 
-.language-toggle {
-  appearance: none;
-  min-width: 40px;
-  padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.92);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  cursor: pointer;
-}
-
 .menu-trigger {
   display: inline-flex;
   align-items: center;
@@ -223,8 +209,7 @@ input {
   line-height: 1.02;
 }
 
-.empty-state__copy,
-.empty-state__note {
+.empty-state__copy {
   margin: 0;
   color: var(--text-muted);
   font-size: 15px;
@@ -235,34 +220,6 @@ input {
   display: flex;
   gap: 12px;
   margin-top: 24px;
-}
-
-.empty-state__formats {
-  display: grid;
-  gap: 12px;
-  margin-top: 28px;
-}
-
-.formats-label {
-  color: var(--text-soft);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.formats-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.formats-pill {
-  padding: 10px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-main);
-  font-size: 13px;
 }
 
 .loading-overlay {
@@ -340,6 +297,10 @@ input {
 body[data-loading-mode="indeterminate"] .loading-overlay__fill {
   width: 34%;
   animation: loading-indeterminate 1.2s ease-in-out infinite;
+}
+
+.viewer-slot #loadingWrap > #loadingBar {
+  display: none !important;
 }
 
 .message-banner {

@@ -1,7 +1,7 @@
 {
   "name": "supersplat-desktop-viewer",
   "private": true,
-  "version": "0.1.16",
+  "version": "0.1.17",
   "type": "module",
   "scripts": {
     "version:bump": "node scripts/bump-version.mjs patch",

@@ -1,0 +1,45 @@
+name: Feature
+description: Product or engineering change with clear delivery criteria.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - type:feature
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or engineering problem are we solving?
+      placeholder: The desktop viewer needs...
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected outcome
+      description: Describe the target behavior, not the implementation.
+      placeholder: Users can...
+    validations:
+      required: true
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation notes
+      description: Known constraints, modules, upstream dependencies, or technical caveats.
+      placeholder: Relevant files, viewer/runtime constraints, release notes, etc.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Flat checklist is fine.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: session_memory
+    attributes:
+      label: Session memory
+      description: Keep a compact running log here or in comments as work progresses.
+      placeholder: Current state, decisions taken, links to commits or builds.

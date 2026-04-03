@@ -31,7 +31,6 @@
 
         <div class="toolbar__side toolbar__side--right">
           <div class="toolbar__stats" id="sceneStats">Open a local scene</div>
-          <button class="language-toggle" id="languageToggleButton" type="button">RU</button>
           <div class="toolbar__state" id="viewerStateText" hidden>Select a local scene to preview</div>
           <div class="status-badge" id="statusBadge" hidden>Waiting for file</div>
         </div>
@@ -48,16 +47,6 @@
 
             <div class="empty-state__actions">
               <button class="button button--primary" id="emptyOpenButton" type="button">Choose Scene</button>
-            </div>
-
-            <div class="empty-state__formats">
-              <span class="formats-label" id="formatsLabel">Supported extensions</span>
-              <div class="formats-list" id="formatsList"></div>
-              <p class="empty-state__note" id="emptyStateNote">
-                Installer file association is registered for <code>.ply</code> and <code>.sog</code>. Files
-                <code>.meta.json</code> and <code>.lod-meta.json</code> open through <code>Open File</code>,
-                drag-and-drop, or <code>Open with...</code> so the app does not take over all regular <code>.json</code> files.
-              </p>
             </div>
           </div>
         </section>

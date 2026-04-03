@@ -2,10 +2,9 @@ import './styles.css';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { SUPPORTED_FILE_LABELS, type OpenFilePayload } from './shared/files';
+import type { OpenFilePayload } from './shared/files';
 
 type UiState = 'idle' | 'loading' | 'ready' | 'error';
-type Language = 'en' | 'ru';
 
 type ViewerConfig = {
   contentUrl: string;
@@ -134,8 +133,7 @@ declare global {
 
 const FILE_OPEN_EVENT = 'file-open';
 const STORAGE_KEYS = {
-  initialCameraPose: 'supersplat.desktop.initialCameraPose.v1',
-  language: 'supersplat.desktop.language.v1'
+  initialCameraPose: 'supersplat.desktop.initialCameraPose.v1'
 } as const;
 
 const state = {
@@ -145,7 +143,6 @@ const state = {
   lastLoadMs: null as number | null,
   loadingCaption: 'Select a local scene to preview',
   loadingPercent: null as number | null,
-  language: 'en' as Language,
   message: '',
   messageKind: 'error' as 'error' | 'warning',
   sceneNumSplats: null as number | null,
@@ -187,16 +184,12 @@ const elements = {
   emptyOpenButton: document.getElementById('emptyOpenButton') as HTMLButtonElement,
   emptyStateCopy: document.getElementById('emptyStateCopy') as HTMLParagraphElement,
   emptyStateKicker: document.getElementById('emptyStateKicker') as HTMLDivElement,
-  emptyStateNote: document.getElementById('emptyStateNote') as HTMLParagraphElement,
   emptyStateTitle: document.getElementById('emptyStateTitle') as HTMLHeadingElement,
   emptyState: document.getElementById('emptyState') as HTMLDivElement,
   fieldOfViewTitle: document.getElementById('fieldOfViewTitle') as HTMLDivElement,
   filePath: document.getElementById('filePath') as HTMLSpanElement,
   fileName: document.getElementById('fileName') as HTMLSpanElement,
-  formatsLabel: document.getElementById('formatsLabel') as HTMLSpanElement,
   frameSceneButton: document.getElementById('frameSceneButton') as HTMLButtonElement,
-  languageToggleButton: document.getElementById('languageToggleButton') as HTMLButtonElement,
-  formatsList: document.getElementById('formatsList') as HTMLDivElement,
   loadingEyebrow: document.getElementById('loadingEyebrow') as HTMLDivElement,
   loadingCaption: document.getElementById('loadingCaption') as HTMLSpanElement,
   loadingFill: document.getElementById('loadingFill') as HTMLDivElement,
@@ -286,95 +279,48 @@ const initialCameraNumericInputs: Record<
   targetZ: elements.cameraTargetZNumber
 };
 
-const TRANSLATIONS = {
-  en: {
-    cameraPanelEyebrow: 'SCENE SETTINGS',
-    cameraPositionLabel: 'Position',
-    cameraTargetLabel: 'Target',
-    chooseScene: 'Choose Scene',
-    emptyStateCopy: 'Open a local file from the system dialog or drag a scene directly into the app window.',
-    emptyStateKicker: 'Offline Windows Viewer',
-    emptyStateNoteHtml:
-      'Installer file association is registered for <code>.ply</code> and <code>.sog</code>. Files <code>.meta.json</code> and <code>.lod-meta.json</code> open through <code>Open File</code>, drag-and-drop, or <code>Open with...</code> so the app does not take over all regular <code>.json</code> files.',
-    emptyStateTitle: 'Local viewer for 3D Gaussian Splat scenes',
-    error: 'Loading error',
-    errorLoading: 'Loading error',
-    fieldOfViewTitle: 'Field of View',
-    formatsLabel: 'Supported extensions',
-    frame: 'Frame',
-    idle: 'Waiting for file',
-    loading: 'Loading scene',
-    loadingEyebrow: 'Scene Loading',
-    menu: 'Menu',
-    openFile: 'Open File',
-    openLocalScene: 'Open a local scene',
-    openScene: 'Opening scene',
-    preparingFirstFrame: 'Preparing first frame',
-    preparingNewScene: 'Preparing new scene',
-    preparingScene: 'Preparing scene',
-    ready: 'Scene ready',
-    readyIn: 'Scene ready in {duration}',
-    reset: 'Reset',
-    rotationTitle: 'Rotation',
-    sceneOpenError: 'Viewer failed to open the scene.',
-    selectLocalScene: 'Select a local scene to preview',
-    startCameraTitle: 'Start Camera',
-    streamOpenFailed: 'Failed to open streamed local file.',
-    streamingData: 'Loading scene data',
-    unsupportedFiles:
-      'Only local .ply, .sog, .meta.json and .lod-meta.json files are supported.',
-    viewerError: 'Viewer reported an error while opening the local scene',
-    viewerInit: 'Initializing PlayCanvas viewer',
-    waitCurrentLoad: 'Wait for the current scene to finish loading.',
-    loadingPercent: 'Loading {percent}%'
-  },
-  ru: {
-    cameraPanelEyebrow: 'НАСТРОЙКИ СЦЕНЫ',
-    cameraPositionLabel: 'Позиция',
-    cameraTargetLabel: 'Цель',
-    chooseScene: 'Выбрать сцену',
-    emptyStateCopy: 'Откройте локальный файл через системный диалог или перетащите сцену прямо в окно приложения.',
-    emptyStateKicker: 'Оффлайн Windows Viewer',
-    emptyStateNoteHtml:
-      'Ассоциация установщика регистрируется для <code>.ply</code> и <code>.sog</code>. Файлы <code>.meta.json</code> и <code>.lod-meta.json</code> открываются через <code>Open File</code>, drag-and-drop или <code>Open with...</code>, чтобы не перехватывать все обычные <code>.json</code>.',
-    emptyStateTitle: 'Локальный просмотрщик сцен 3D Gaussian Splat',
-    error: 'Ошибка загрузки',
-    errorLoading: 'Ошибка загрузки',
-    fieldOfViewTitle: 'Угол обзора',
-    formatsLabel: 'Поддерживаемые расширения',
-    frame: 'Вписать',
-    idle: 'Ожидание файла',
-    loading: 'Загрузка сцены',
-    loadingEyebrow: 'Загрузка сцены',
-    menu: 'Меню',
-    openFile: 'Открыть файл',
-    openLocalScene: 'Откройте локальную сцену',
-    openScene: 'Открываем сцену',
-    preparingFirstFrame: 'Подготавливаем первый кадр',
-    preparingNewScene: 'Подготавливаем новую сцену',
-    preparingScene: 'Подготавливаем сцену',
-    ready: 'Сцена готова',
-    readyIn: 'Сцена готова за {duration}',
-    reset: 'Сбросить',
-    rotationTitle: 'Поворот',
-    sceneOpenError: 'Viewer не смог открыть сцену.',
-    selectLocalScene: 'Выберите локальную сцену для просмотра',
-    startCameraTitle: 'Стартовая камера',
-    streamOpenFailed: 'Не удалось открыть потоковое чтение локального файла.',
-    streamingData: 'Загружаем данные сцены',
-    unsupportedFiles:
-      'Поддерживаются только локальные файлы .ply, .sog, .meta.json и .lod-meta.json.',
-    viewerError: 'Viewer сообщил об ошибке при открытии локальной сцены',
-    viewerInit: 'Инициализируем PlayCanvas viewer',
-    waitCurrentLoad: 'Дождитесь завершения текущей загрузки сцены.',
-    loadingPercent: 'Загрузка {percent}%'
-  }
+const TEXT = {
+  cameraPanelEyebrow: 'SCENE SETTINGS',
+  cameraPositionLabel: 'Position',
+  cameraTargetLabel: 'Target',
+  chooseScene: 'Choose Scene',
+  emptyStateCopy: 'Open a local file from the system dialog or drag a scene directly into the app window.',
+  emptyStateKicker: 'Offline Windows Viewer',
+  emptyStateTitle: 'Local viewer for 3D Gaussian Splat scenes',
+  error: 'Loading error',
+  errorLoading: 'Loading error',
+  fieldOfViewTitle: 'Field of View',
+  frame: 'Frame',
+  idle: 'Waiting for file',
+  loading: 'Loading scene',
+  loadingEyebrow: 'Scene Loading',
+  menu: 'Menu',
+  openFile: 'Open File',
+  openLocalScene: 'Open a local scene',
+  openScene: 'Opening scene',
+  preparingFirstFrame: 'Preparing first frame',
+  preparingNewScene: 'Preparing new scene',
+  preparingScene: 'Preparing scene',
+  ready: 'Scene ready',
+  readyIn: 'Scene ready in {duration}',
+  reset: 'Reset',
+  rotationTitle: 'Rotation',
+  sceneOpenError: 'Viewer failed to open the scene.',
+  selectLocalScene: 'Select a local scene to preview',
+  startCameraTitle: 'Start Camera',
+  streamOpenFailed: 'Failed to open streamed local file.',
+  streamingData: 'Loading scene data',
+  unsupportedFiles: 'Only local .ply, .sog, .meta.json and .lod-meta.json files are supported.',
+  viewerError: 'Viewer reported an error while opening the local scene',
+  viewerInit: 'Initializing PlayCanvas viewer',
+  waitCurrentLoad: 'Wait for the current scene to finish loading.',
+  loadingPercent: 'Loading {percent}%'
 } as const;
 
-type TranslationKey = keyof (typeof TRANSLATIONS)['en'];
+type TranslationKey = keyof typeof TEXT;
 
-const getLocale = () => (state.language === 'ru' ? 'ru-RU' : 'en-US');
-const t = (key: TranslationKey): string => TRANSLATIONS[state.language][key];
+const getLocale = () => 'en-US';
+const t = (key: TranslationKey): string => TEXT[key];
 const translateTemplate = (
   key: TranslationKey,
   replacements: Record<string, string | number>
@@ -386,16 +332,13 @@ const translateTemplate = (
   return result;
 };
 
-const applyLocalizedStaticText = () => {
-  document.documentElement.lang = state.language;
+const applyStaticText = () => {
+  document.documentElement.lang = 'en';
   elements.menuTriggerLabel.textContent = t('menu');
-  elements.languageToggleButton.textContent = state.language === 'en' ? 'RU' : 'EN';
   elements.emptyStateKicker.textContent = t('emptyStateKicker');
   elements.emptyStateTitle.textContent = t('emptyStateTitle');
   elements.emptyStateCopy.textContent = t('emptyStateCopy');
   elements.emptyOpenButton.textContent = t('chooseScene');
-  elements.formatsLabel.textContent = t('formatsLabel');
-  elements.emptyStateNote.innerHTML = t('emptyStateNoteHtml');
   elements.loadingEyebrow.textContent = t('loadingEyebrow');
   elements.cameraPanelEyebrow.textContent = t('cameraPanelEyebrow');
   elements.fieldOfViewTitle.textContent = t('fieldOfViewTitle');
@@ -406,18 +349,6 @@ const applyLocalizedStaticText = () => {
   elements.openFileButton.textContent = t('openFile');
   elements.frameSceneButton.textContent = t('frame');
   elements.resetViewButton.textContent = t('reset');
-};
-
-const setLanguage = (language: Language) => {
-  state.language = language;
-  persistLanguage(language);
-  if (state.uiState === 'idle') {
-    state.loadingCaption = t('selectLocalScene');
-  } else if (state.uiState === 'ready') {
-    state.loadingCaption = t('ready');
-  }
-  applyLocalizedStaticText();
-  render();
 };
 
 const getLaunchFile = () => invoke<OpenFilePayload | null>('get_launch_file');
@@ -431,12 +362,10 @@ const reportRendererError = (message: string) => invoke('report_renderer_error',
 
 const formatDuration = (durationMs: number) => {
   if (durationMs < 1000) {
-    return state.language === 'ru' ? `${Math.round(durationMs)} мс` : `${Math.round(durationMs)} ms`;
+    return `${Math.round(durationMs)} ms`;
   }
 
-  return state.language === 'ru'
-    ? `${(durationMs / 1000).toFixed(2)} с`
-    : `${(durationMs / 1000).toFixed(2)} s`;
+  return `${(durationMs / 1000).toFixed(2)} s`;
 };
 
 const formatBytes = (sizeBytes: number) => {
@@ -485,17 +414,6 @@ const getViewerStateText = () => {
     default:
       return t('selectLocalScene');
   }
-};
-
-const renderFormats = () => {
-  elements.formatsList.replaceChildren(
-    ...SUPPORTED_FILE_LABELS.map((extension) => {
-      const pill = document.createElement('span');
-      pill.className = 'formats-pill';
-      pill.textContent = extension;
-      return pill;
-    })
-  );
 };
 
 const clearMessage = () => {
@@ -627,24 +545,9 @@ const readStoredJson = <T>(key: string): T | null => {
   }
 };
 
-const readStoredLanguage = (): Language => {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEYS.language);
-    return raw === 'ru' ? 'ru' : 'en';
-  } catch {
-    return 'en';
-  }
-};
-
 const writeStoredJson = (key: string, value: unknown) => {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
-};
-
-const persistLanguage = (language: Language) => {
-  try {
-    window.localStorage.setItem(STORAGE_KEYS.language, language);
   } catch {}
 };
 
@@ -1161,19 +1064,11 @@ const ensureViewerAssets = async () => {
   ]);
 
   if (!bodyResponse.ok) {
-    throw new Error(
-      state.language === 'ru'
-        ? `viewer-body.html недоступен: ${bodyResponse.status}`
-        : `viewer-body.html is unavailable: ${bodyResponse.status}`
-    );
+    throw new Error(`viewer-body.html is unavailable: ${bodyResponse.status}`);
   }
 
   if (!settingsResponse.ok) {
-    throw new Error(
-      state.language === 'ru'
-        ? `settings.json недоступен: ${settingsResponse.status}`
-        : `settings.json is unavailable: ${settingsResponse.status}`
-    );
+    throw new Error(`settings.json is unavailable: ${settingsResponse.status}`);
   }
 
   viewerRuntime.bodyMarkup = await bodyResponse.text();
@@ -1440,7 +1335,7 @@ const mountViewer = async (
   if (!(canvas instanceof HTMLCanvasElement) || !viewerRuntime.mainFn) {
     finalizeCleanup(null);
     slotRoot.remove();
-    throw new Error(state.language === 'ru' ? 'Не удалось смонтировать canvas upstream viewer.' : 'Failed to mount upstream viewer canvas.');
+    throw new Error('Failed to mount upstream viewer canvas.');
   }
 
   disconnectLoadingObserver = installViewerLoadingBridge(slotRoot, requestId);
@@ -1614,11 +1509,7 @@ const openFromPayload = async (payload: OpenFilePayload) => {
     preparedContent = await createPreparedContent(payload);
     const response = await preparedContent.contents;
     if (!response.ok) {
-      throw new Error(
-        state.language === 'ru'
-          ? `Не удалось прочитать файл: ${response.status}`
-          : `Failed to read file: ${response.status}`
-      );
+      throw new Error(`Failed to read file: ${response.status}`);
     }
 
     if (requestId !== state.currentRequestId) {
@@ -1660,11 +1551,11 @@ const openFromDialog = async () => {
     filters: [
       {
         extensions: ['ply', 'sog', 'json'],
-        name: state.language === 'ru' ? 'Сцены 3DGS' : '3DGS scenes'
+        name: '3DGS scenes'
       }
     ],
     multiple: false,
-    title: state.language === 'ru' ? 'Открыть сцену 3D Gaussian Splat' : 'Open 3D Gaussian Splat Scene'
+    title: 'Open 3D Gaussian Splat Scene'
   });
 
   if (typeof selected !== 'string') {
@@ -1690,7 +1581,7 @@ const handleIncomingPayload = async (payload: OpenFilePayload | null) => {
 
 const handleNativeDropPath = async (filePath: string | null | undefined) => {
   if (!filePath) {
-    showWarning(state.language === 'ru' ? 'Не удалось определить путь к перетащенному файлу.' : 'Failed to resolve the dropped file path.');
+    showWarning('Failed to resolve the dropped file path.');
     return;
   }
 
@@ -1713,10 +1604,8 @@ const installDragAndDrop = async () => {
 };
 
 const init = async () => {
-  state.language = readStoredLanguage();
   state.inspectorOpen = false;
-  applyLocalizedStaticText();
-  renderFormats();
+  applyStaticText();
   applyModelRotationControlsState(DEFAULT_SCENE_TRANSFORM, true);
   applyInitialCameraControlsState(getPersistedInitialCameraPose(), true);
   state.loadingCaption = t('selectLocalScene');
@@ -1738,9 +1627,6 @@ const init = async () => {
   });
   elements.emptyOpenButton.addEventListener('click', () => {
     void openFromDialog();
-  });
-  elements.languageToggleButton.addEventListener('click', () => {
-    setLanguage(state.language === 'en' ? 'ru' : 'en');
   });
   elements.togglePanelButton.addEventListener('click', () => {
     state.inspectorOpen = !state.inspectorOpen;
