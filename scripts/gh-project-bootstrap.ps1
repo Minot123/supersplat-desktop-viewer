@@ -30,7 +30,7 @@ $labels = @(
 )
 
 $projectFields = @(
-  @{ Name = "Status"; Options = @("Backlog", "Ready", "In Progress", "Blocked", "Done") },
+  @{ Name = "Workflow Status"; Options = @("Backlog", "Ready", "In Progress", "Blocked", "Done") },
   @{ Name = "Type"; Options = @("Feature", "Bug", "Research", "Release") },
   @{ Name = "Priority"; Options = @("High", "Medium", "Low") },
   @{ Name = "Area"; Options = @("UI", "Viewer Runtime", "Performance", "File Loading", "Packaging", "Release") },
@@ -78,7 +78,7 @@ foreach ($field in $projectFields) {
 Write-Host ""
 Write-Host "Project bootstrap complete."
 Write-Host "Recommended manual views:"
-Write-Host "  - Current: Status is Ready, In Progress, or Blocked"
+Write-Host "  - Current: Workflow Status is Ready, In Progress, or Blocked"
 Write-Host "  - UI / UX: Area = UI"
 Write-Host "  - Performance: Area = Performance or File Loading"
 Write-Host "  - Release: Type = Release"

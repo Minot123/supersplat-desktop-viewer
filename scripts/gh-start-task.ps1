@@ -103,7 +103,7 @@ if (-not $itemId) {
   throw "Issue was added to the project, but item id could not be resolved."
 }
 
-Set-ProjectSingleSelectValue -Owner $Owner -ProjectNumber $projectNumber -ProjectId $projectId -ItemId $itemId -Fields $fields -FieldName "Status" -OptionName $Status
+Set-ProjectSingleSelectValue -Owner $Owner -ProjectNumber $projectNumber -ProjectId $projectId -ItemId $itemId -Fields $fields -FieldName "Workflow Status" -OptionName $Status
 Set-ProjectSingleSelectValue -Owner $Owner -ProjectNumber $projectNumber -ProjectId $projectId -ItemId $itemId -Fields $fields -FieldName "Type" -OptionName $Type
 Set-ProjectSingleSelectValue -Owner $Owner -ProjectNumber $projectNumber -ProjectId $projectId -ItemId $itemId -Fields $fields -FieldName "Priority" -OptionName $Priority
 Set-ProjectSingleSelectValue -Owner $Owner -ProjectNumber $projectNumber -ProjectId $projectId -ItemId $itemId -Fields $fields -FieldName "Area" -OptionName $Area

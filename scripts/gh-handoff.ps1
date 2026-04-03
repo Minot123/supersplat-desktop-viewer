@@ -92,7 +92,7 @@ if (-not $itemId) {
   exit 0
 }
 
-Set-ProjectSingleSelectValue -Owner $Owner -ProjectNumber $projectNumber -ProjectId $projectId -ItemId $itemId -Fields $fields -FieldName "Status" -OptionName $Status
+Set-ProjectSingleSelectValue -Owner $Owner -ProjectNumber $projectNumber -ProjectId $projectId -ItemId $itemId -Fields $fields -FieldName "Workflow Status" -OptionName $Status
 Set-ProjectSingleSelectValue -Owner $Owner -ProjectNumber $projectNumber -ProjectId $projectId -ItemId $itemId -Fields $fields -FieldName "Agent State" -OptionName $AgentState
 
 Write-Host "Handoff comment posted and project item updated."

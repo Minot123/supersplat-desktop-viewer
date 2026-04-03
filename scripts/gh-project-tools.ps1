@@ -60,12 +60,19 @@ function Get-ProjectByTitle {
     [string]$Title
   )
 
-  $projects = Invoke-GhJson -Arguments @("project", "list", "--owner", $Owner, "--format", "json")
-  if (-not $projects) {
+  $result = Invoke-GhJson -Arguments @("project", "list", "--owner", $Owner, "--format", "json")
+  if (-not $result) {
     return $null
   }
 
-  return @($projects) | Where-Object { $_.title -eq $Title } | Select-Object -First 1
+  $projects = @()
+  if ($result.PSObject.Properties.Name -contains "projects") {
+    $projects = @($result.projects)
+  } elseif ($result -is [System.Collections.IEnumerable] -and -not ($result -is [string])) {
+    $projects = @($result)
+  }
+
+  return $projects | Where-Object { $_.title -eq $Title } | Select-Object -First 1
 }
 
 function Get-ProjectViewData {
@@ -87,8 +94,16 @@ function Get-ProjectFields {
     [int]$ProjectNumber
   )
 
-  $fields = Invoke-GhJson -Arguments @("project", "field-list", "$ProjectNumber", "--owner", $Owner, "--limit", "100", "--format", "json")
-  return @($fields)
+  $result = Invoke-GhJson -Arguments @("project", "field-list", "$ProjectNumber", "--owner", $Owner, "--limit", "100", "--format", "json")
+  if (-not $result) {
+    return @()
+  }
+
+  if ($result.PSObject.Properties.Name -contains "fields") {
+    return @($result.fields)
+  }
+
+  return @($result)
 }
 
 function Get-ProjectFieldByName {
@@ -150,8 +165,17 @@ function Resolve-ProjectItemIdFromIssueUrl {
     [string]$IssueUrl
   )
 
-  $items = Invoke-GhJson -Arguments @("project", "item-list", "$ProjectNumber", "--owner", $Owner, "--limit", "200", "--format", "json")
-  foreach ($item in @($items)) {
+  $result = Invoke-GhJson -Arguments @("project", "item-list", "$ProjectNumber", "--owner", $Owner, "--limit", "200", "--format", "json")
+  $items = @()
+  if ($result) {
+    if ($result.PSObject.Properties.Name -contains "items") {
+      $items = @($result.items)
+    } else {
+      $items = @($result)
+    }
+  }
+
+  foreach ($item in $items) {
     if ($item.content -and $item.content.url -eq $IssueUrl) {
       return $item.id
     }

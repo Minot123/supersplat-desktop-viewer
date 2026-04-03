@@ -51,7 +51,7 @@ Recommended project title:
 
 Recommended custom fields:
 
-- `Status`: Backlog, Ready, In Progress, Blocked, Done
+- `Workflow Status`: Backlog, Ready, In Progress, Blocked, Done
 - `Type`: Feature, Bug, Research, Release
 - `Priority`: High, Medium, Low
 - `Area`: UI, Viewer Runtime, Performance, File Loading, Packaging, Release
@@ -60,7 +60,7 @@ Recommended custom fields:
 
 Recommended views:
 
-- `Current`: Status is Ready, In Progress, or Blocked
+- `Current`: Workflow Status is Ready, In Progress, or Blocked
 - `UI / UX`: Area = UI
 - `Performance`: Area = Performance or File Loading
 - `Release`: Type = Release
@@ -104,7 +104,7 @@ Without that scope, labels and issues can still be managed, but project creation
 
 1. Create or pick an issue.
 2. Add it to the Project.
-3. Set `Status=In Progress` and `Agent State=Human` or `Agent-ready`.
+3. Set `Workflow Status=In Progress` and `Agent State=Human` or `Agent-ready`.
 4. Do the work.
 5. Leave a handoff comment before ending the session.
 6. Move to `Done` only when the repo state and release state match reality.
