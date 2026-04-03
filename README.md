@@ -5,13 +5,12 @@ Lightweight offline Windows desktop viewer for 3D Gaussian Splat scenes, built w
 ## Features
 
 - Native Windows shell on Tauri instead of Electron
-- Open `.ply`, `.sog`, `.meta.json`, and `.lod-meta.json`
+- Open `.ply`, `.sog`,  and `.ssproj`
 - `Open with...`, drag-and-drop, and OS file-open flow
 - Disabled autoplay / auto-rotation
 - Desktop camera and scene controls
 - Loading overlay and scene status UI
 - Session-level persistence for `Field of View` and model rotation
-- English-only UI
 - Internal localhost streaming path for large scenes
 
 ## Requirements
