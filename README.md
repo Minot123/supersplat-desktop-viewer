@@ -33,3 +33,8 @@ Lightweight offline Windows desktop viewer for 3D Gaussian Splat scenes, built w
 
 - Large-scene loading now uses an internal localhost streaming path to avoid the earlier WebView2 crash pattern seen on repeated heavy scene opens
 - `.ssproj` support is runtime-oriented: the viewer opens the embedded scene payload, but does not yet apply editor-specific project metadata.
+
+## License
+
+- Project code: [MIT](LICENSE)
+- Third-party assets and dependency notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
