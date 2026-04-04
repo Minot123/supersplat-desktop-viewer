@@ -42,12 +42,14 @@ struct LocalHttpServer {
   session_token: String,
 }
 
+#[derive(Clone)]
 struct LocalHttpStreamSession {
   content_type: &'static str,
   source: LocalHttpStreamSource,
   size_bytes: u64,
 }
 
+#[derive(Clone)]
 enum LocalHttpStreamSource {
   File(PathBuf),
   SsprojPly { archive_path: PathBuf, entry_name: String },
@@ -388,7 +390,7 @@ fn handle_local_http_client(
   };
 
   let scene = match streams.lock() {
-    Ok(mut guard) => guard.remove(&session_id),
+    Ok(guard) => guard.get(&session_id).cloned(),
     Err(_) => None,
   };
 

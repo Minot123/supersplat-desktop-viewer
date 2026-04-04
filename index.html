@@ -10,10 +10,14 @@
 
   <body>
     <div class="viewer-viewport" id="viewerViewport"></div>
+    <div class="editor-stage" id="editorStage" hidden>
+      <iframe class="editor-stage__frame" id="editorFrame" title="SuperSplat Editor"></iframe>
+    </div>
 
     <div class="app-shell">
       <header class="toolbar">
         <div class="toolbar__side toolbar__side--left">
+          <button class="toolbar-action" id="backToViewerButton" type="button" hidden>Viewer</button>
           <button class="menu-trigger" id="togglePanelButton" type="button" hidden>
             <span class="menu-trigger__icon" aria-hidden="true">
               <span></span>
@@ -22,6 +26,7 @@
             </span>
             <span class="menu-trigger__label" id="menuTriggerLabel">Menu</span>
           </button>
+          <button class="toolbar-action" id="openEditorButton" type="button">Editor</button>
         </div>
 
         <div class="toolbar__center">

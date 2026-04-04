@@ -327,6 +327,9 @@ Viewer.prototype.frameDesktopScene = function() {
 Viewer.prototype.getDesktopInitialCameraPose = function() {
     return this.cameraManager?.getDesktopInitialCameraPose?.() ?? null;
 };
+Viewer.prototype.getDesktopCurrentCameraPose = function() {
+    return this.cameraManager?.camera ? desktopSerializeCameraPose(this.cameraManager.camera) : null;
+};
 Viewer.prototype.setDesktopInitialCameraPose = function(nextPose = {}) {
     return this.cameraManager?.setDesktopInitialCameraPose?.(nextPose) ?? null;
 };

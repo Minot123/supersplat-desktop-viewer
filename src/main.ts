@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { OpenFilePayload } from './shared/files';
 
+type UiMode = 'viewer' | 'editor';
 type UiState = 'idle' | 'loading' | 'ready' | 'error';
 
 type ViewerConfig = {
@@ -88,6 +89,7 @@ type ViewerInstance = {
   applyDesktopDefaults?: () => DesktopCameraState | null;
   frameDesktopScene?: () => DesktopCameraState | null;
   getDesktopCameraState?: () => DesktopCameraState | null;
+  getDesktopCurrentCameraPose?: () => DesktopInitialCameraPose | null;
   getDesktopInitialCameraPose?: () => DesktopInitialCameraPose | null;
   getDesktopSceneTransform?: () => DesktopSceneTransformState | null;
   getDesktopSceneStats?: () => ViewerSceneStats | null;
@@ -115,6 +117,18 @@ type PreparedContent = {
   contentUrl: string;
   contents: Promise<Response>;
   dispose: () => Promise<void>;
+};
+
+type EditorLaunchSession = {
+  cameraPose: DesktopInitialCameraPose | null;
+  contentName: string;
+  dispose: () => Promise<void>;
+  sourcePath: string;
+  streamUrl: string;
+};
+
+type EditorEmbeddedWindow = Window & {
+  __desktopGetCameraPose?: () => DesktopInitialCameraPose | null;
 };
 
 type LocalHttpStreamOpenPayload = {
@@ -145,6 +159,7 @@ const state = {
   loadingPercent: null as number | null,
   message: '',
   messageKind: 'error' as 'error' | 'warning',
+  mode: 'viewer' as UiMode,
   sceneNumSplats: null as number | null,
   uiState: 'idle' as UiState
 };
@@ -168,6 +183,16 @@ const viewerRuntime = {
   settingsJson: null as unknown
 };
 
+const editorRuntime = {
+  activeSession: null as EditorLaunchSession | null,
+  assetsCheck: null as Promise<void> | null
+};
+
+const cameraInteropState = {
+  pendingViewerPose: null as DesktopInitialCameraPose | null,
+  viewerPoseReapplyToken: 0
+};
+
 let messageTimer: number | null = null;
 let syncingInspectorControls = false;
 
@@ -175,6 +200,7 @@ const elements = {
   cameraPanel: document.getElementById('cameraPanel') as HTMLDivElement,
   cameraFovNumber: document.getElementById('cameraFovNumber') as HTMLInputElement,
   cameraFovRange: document.getElementById('cameraFovRange') as HTMLInputElement,
+  backToViewerButton: document.getElementById('backToViewerButton') as HTMLButtonElement,
   cameraPositionXNumber: document.getElementById('cameraPositionXNumber') as HTMLInputElement,
   cameraPositionYNumber: document.getElementById('cameraPositionYNumber') as HTMLInputElement,
   cameraPositionZNumber: document.getElementById('cameraPositionZNumber') as HTMLInputElement,
@@ -186,6 +212,8 @@ const elements = {
   emptyStateKicker: document.getElementById('emptyStateKicker') as HTMLDivElement,
   emptyStateTitle: document.getElementById('emptyStateTitle') as HTMLHeadingElement,
   emptyState: document.getElementById('emptyState') as HTMLDivElement,
+  editorFrame: document.getElementById('editorFrame') as HTMLIFrameElement,
+  editorStage: document.getElementById('editorStage') as HTMLDivElement,
   fieldOfViewTitle: document.getElementById('fieldOfViewTitle') as HTMLDivElement,
   filePath: document.getElementById('filePath') as HTMLSpanElement,
   fileName: document.getElementById('fileName') as HTMLSpanElement,
@@ -203,6 +231,7 @@ const elements = {
   modelRotationYRange: document.getElementById('modelRotationYRange') as HTMLInputElement,
   modelRotationZNumber: document.getElementById('modelRotationZNumber') as HTMLInputElement,
   modelRotationZRange: document.getElementById('modelRotationZRange') as HTMLInputElement,
+  openEditorButton: document.getElementById('openEditorButton') as HTMLButtonElement,
   openFileButton: document.getElementById('openFileButton') as HTMLButtonElement,
   cameraPanelEyebrow: document.getElementById('cameraPanelEyebrow') as HTMLDivElement,
   cameraPositionLabel: document.getElementById('cameraPositionLabel') as HTMLSpanElement,
@@ -212,6 +241,7 @@ const elements = {
   sceneStats: document.getElementById('sceneStats') as HTMLDivElement,
   startCameraTitle: document.getElementById('startCameraTitle') as HTMLDivElement,
   statusBadge: document.getElementById('statusBadge') as HTMLDivElement,
+  toolbar: document.querySelector('.toolbar') as HTMLElement,
   togglePanelButton: document.getElementById('togglePanelButton') as HTMLButtonElement,
   menuTriggerLabel: document.getElementById('menuTriggerLabel') as HTMLSpanElement,
   viewerStateText: document.getElementById('viewerStateText') as HTMLDivElement,
@@ -280,6 +310,7 @@ const initialCameraNumericInputs: Record<
 };
 
 const TEXT = {
+  backToViewer: 'Viewer',
   cameraPanelEyebrow: 'SCENE SETTINGS',
   cameraPositionLabel: 'Position',
   cameraTargetLabel: 'Target',
@@ -287,6 +318,11 @@ const TEXT = {
   emptyStateCopy: 'Open a local file from the system dialog or drag a scene directly into the app window.',
   emptyStateKicker: 'Offline Windows Viewer',
   emptyStateTitle: 'Local viewer for 3D Gaussian Splat scenes',
+  editor: 'Editor',
+  editorLaunchFailed: 'Failed to open the desktop editor window.',
+  editorLoading: 'Loading editor',
+  editorPreparing: 'Preparing desktop editor',
+  editorUnsupportedCurrentScene: 'The current scene type cannot be transferred directly to editor mode yet.',
   error: 'Loading error',
   errorLoading: 'Loading error',
   fieldOfViewTitle: 'Field of View',
@@ -334,7 +370,9 @@ const translateTemplate = (
 
 const applyStaticText = () => {
   document.documentElement.lang = 'en';
+  elements.backToViewerButton.textContent = t('backToViewer');
   elements.menuTriggerLabel.textContent = t('menu');
+  elements.openEditorButton.textContent = t('editor');
   elements.emptyStateKicker.textContent = t('emptyStateKicker');
   elements.emptyStateTitle.textContent = t('emptyStateTitle');
   elements.emptyStateCopy.textContent = t('emptyStateCopy');
@@ -359,6 +397,88 @@ const resolveFilePath = (filePath: string) =>
 const closeLocalHttpStream = (sessionId: number) =>
   invoke<boolean>('close_local_http_stream', { sessionId });
 const reportRendererError = (message: string) => invoke('report_renderer_error', { message });
+
+const ensureEditorAssets = async () => {
+  if (!editorRuntime.assetsCheck) {
+    editorRuntime.assetsCheck = (async () => {
+      const response = await fetch('/editor/index.html', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`editor/index.html is unavailable: ${response.status}`);
+      }
+    })();
+  }
+
+  return editorRuntime.assetsCheck;
+};
+
+const isEditorTransferSupported = (payload: OpenFilePayload) => {
+  const normalized = payload.path.replace(/\\/g, '/').toLowerCase();
+  return !normalized.endsWith('.meta.json') && !normalized.endsWith('.lod-meta.json');
+};
+
+const buildEditorRoute = (
+  launchSession?: Pick<EditorLaunchSession, 'cameraPose' | 'contentName' | 'sourcePath' | 'streamUrl'> | null
+) => {
+  const params = new URLSearchParams();
+  params.set('desktop', '1');
+  params.set('lng', 'en');
+
+  if (launchSession) {
+    params.set('load', launchSession.streamUrl);
+    params.set('filename', launchSession.contentName);
+    params.set('desktopSourcePath', launchSession.sourcePath);
+    if (launchSession.cameraPose) {
+      params.set('desktopCameraPose', JSON.stringify(launchSession.cameraPose));
+    }
+  }
+
+  return `/editor/index.html?${params.toString()}`;
+};
+
+const getEditorTransferCameraPose = () => {
+  const viewer = getActiveViewer();
+  return (
+    viewer?.getDesktopCurrentCameraPose?.() ??
+    viewer?.getDesktopInitialCameraPose?.() ??
+    getPersistedInitialCameraPose()
+  );
+};
+
+const createEditorLaunchSession = async (payload: OpenFilePayload): Promise<EditorLaunchSession> => {
+  const streamSession = await openLocalHttpStream(payload.path);
+  if (!streamSession) {
+    throw new Error(t('streamOpenFailed'));
+  }
+
+  let disposed = false;
+
+  return {
+    cameraPose: getEditorTransferCameraPose(),
+    contentName: payload.contentName,
+    sourcePath: payload.path,
+    streamUrl: streamSession.streamUrl,
+    dispose: async () => {
+      if (disposed) {
+        return;
+      }
+
+      disposed = true;
+      try {
+        await closeLocalHttpStream(streamSession.sessionId);
+      } catch {}
+    }
+  };
+};
+
+const setPendingViewerPoseRestore = (pose: DesktopInitialCameraPose | null | undefined) => {
+  cameraInteropState.pendingViewerPose = pose ? normalizeInitialCameraPose(pose) : null;
+};
+
+const consumePendingViewerPoseRestore = () => {
+  const pose = cameraInteropState.pendingViewerPose;
+  cameraInteropState.pendingViewerPose = null;
+  return pose;
+};
 
 const formatDuration = (durationMs: number) => {
   if (durationMs < 1000) {
@@ -880,6 +1000,67 @@ const applyDesktopViewerDefaults = (viewer: ViewerInstance | null) => {
   } catch {}
 };
 
+const reapplyViewerCameraPose = (viewer: ViewerInstance | null, pose: DesktopInitialCameraPose | null) => {
+  if (!viewer?.setDesktopInitialCameraPose || !viewer.resetDesktopCamera || !pose) {
+    return;
+  }
+
+  const setDesktopInitialCameraPose = viewer.setDesktopInitialCameraPose;
+  const resetDesktopCamera = viewer.resetDesktopCamera;
+  const normalizedPose = normalizeInitialCameraPose(pose);
+  const token = ++cameraInteropState.viewerPoseReapplyToken;
+  let framesRemaining = 180;
+  let stopped = false;
+  let successfulApplications = 0;
+
+  const stop = () => {
+    if (successfulApplications < 1) {
+      return;
+    }
+
+    if (stopped) {
+      return;
+    }
+
+    stopped = true;
+    window.removeEventListener('pointerdown', stop, true);
+    window.removeEventListener('wheel', stop, true);
+    window.removeEventListener('touchstart', stop, true);
+  };
+
+  const step = () => {
+    if (stopped || token !== cameraInteropState.viewerPoseReapplyToken) {
+      stop();
+      return;
+    }
+
+    try {
+      setDesktopInitialCameraPose(normalizedPose);
+      resetDesktopCamera();
+      if (viewer.global?.app) {
+        viewer.global.app.renderNextFrame = true;
+      }
+      successfulApplications += 1;
+    } catch {}
+
+    framesRemaining -= 1;
+    if (framesRemaining <= 0) {
+      stop();
+      window.setTimeout(() => {
+        syncInspectorControlsFromViewer(true);
+      }, 40);
+      return;
+    }
+
+    window.requestAnimationFrame(step);
+  };
+
+  window.addEventListener('pointerdown', stop, true);
+  window.addEventListener('wheel', stop, true);
+  window.addEventListener('touchstart', stop, true);
+  step();
+};
+
 const applySceneTransformPatch = (patch: Partial<DesktopSceneTransformState>) => {
   const viewer = getActiveViewer();
   if (!viewer?.setDesktopSceneTransform) {
@@ -1016,11 +1197,13 @@ const bindInitialCameraFovField = () => {
 
 const render = () => {
   const hasFile = Boolean(state.currentFile);
-  const cameraPanelEnabled = hasFile && state.uiState === 'ready' && Boolean(getActiveViewer());
-  const panelVisible = hasFile && state.inspectorOpen;
+  const inEditorMode = state.mode === 'editor';
+  const cameraPanelEnabled = !inEditorMode && hasFile && state.uiState === 'ready' && Boolean(getActiveViewer());
+  const panelVisible = !inEditorMode && hasFile && state.inspectorOpen;
 
   document.body.dataset.hasFile = hasFile ? 'true' : 'false';
   document.body.dataset.inspectorOpen = panelVisible ? 'true' : 'false';
+  document.body.dataset.mode = state.mode;
   document.body.dataset.uiState = state.uiState;
   document.body.dataset.loadingMode = state.loadingPercent === null ? 'indeterminate' : 'determinate';
   document.body.style.setProperty('--loading-progress', `${state.loadingPercent ?? 12}%`);
@@ -1033,8 +1216,10 @@ const render = () => {
   elements.viewerStateText.textContent = getViewerStateText();
   elements.sceneStats.textContent = getSceneStatsText();
 
-  elements.emptyState.hidden = hasFile;
+  elements.emptyState.hidden = hasFile || inEditorMode;
+  elements.editorStage.hidden = !inEditorMode;
   elements.cameraPanel.hidden = !panelVisible;
+  elements.toolbar.hidden = inEditorMode;
   elements.fileName.textContent = state.currentFile?.name ?? 'SuperSplat Desktop Viewer';
   elements.filePath.textContent = state.currentFile?.path ?? '';
   elements.loadingOverlay.hidden = state.uiState !== 'loading';
@@ -1043,12 +1228,20 @@ const render = () => {
   elements.loadingPercent.textContent =
     state.loadingPercent !== null ? `${state.loadingPercent}%` : '...';
   elements.loadingFill.setAttribute('aria-valuenow', `${state.loadingPercent ?? 0}`);
-  elements.togglePanelButton.hidden = !hasFile;
+  elements.togglePanelButton.hidden = !hasFile || inEditorMode;
+  elements.backToViewerButton.hidden = !inEditorMode;
+  elements.openEditorButton.hidden = inEditorMode;
   setCameraPanelEnabled(cameraPanelEnabled);
 
   elements.messageBanner.hidden = !state.message;
   elements.messageBanner.dataset.kind = state.messageKind;
   elements.messageBanner.textContent = state.message;
+  updateShellMetrics();
+};
+
+const updateShellMetrics = () => {
+  const toolbarHeight = state.mode === 'editor' ? 0 : (elements.toolbar?.offsetHeight ?? 82);
+  document.body.style.setProperty('--toolbar-offset', `${toolbarHeight}px`);
 };
 
 const ensureViewerAssets = async () => {
@@ -1432,16 +1625,20 @@ const mountViewer = async (
 };
 
 const activateMountedViewer = (result: { loadMs: number; mounted: MountedViewer }) => {
+  const pendingViewerPose = consumePendingViewerPoseRestore();
   viewerRuntime.activeViewer = result.mounted;
   state.lastLoadMs = result.loadMs;
   state.loadingPercent = 100;
   state.loadingCaption = t('ready');
   state.sceneNumSplats = result.mounted.viewer?.getDesktopSceneStats?.()?.numSplats ?? null;
   rememberSessionRotation(result.mounted.viewer?.getDesktopSceneTransform?.());
-  rememberSessionFov(result.mounted.viewer?.getDesktopInitialCameraPose?.()?.fov);
+  rememberSessionFov(pendingViewerPose?.fov ?? result.mounted.viewer?.getDesktopInitialCameraPose?.()?.fov);
   state.uiState = 'ready';
   render();
   syncInspectorControlsFromViewer(true);
+  if (pendingViewerPose) {
+    reapplyViewerCameraPose(result.mounted.viewer, pendingViewerPose);
+  }
 };
 
 const cleanupAllViewers = () => {
@@ -1488,10 +1685,19 @@ const createPreparedContent = async (payload: OpenFilePayload): Promise<Prepared
   };
 };
 
-const openFromPayload = async (payload: OpenFilePayload) => {
+const openFromPayload = async (
+  payload: OpenFilePayload,
+  options: { viewerCameraPose?: DesktopInitialCameraPose | null } = {}
+) => {
   if (state.uiState === 'loading') {
     showWarning(t('waitCurrentLoad'));
     return;
+  }
+
+  setPendingViewerPoseRestore(options.viewerCameraPose);
+
+  if (state.mode === 'editor') {
+    await closeEditorMode();
   }
 
   clearIssueState();
@@ -1537,6 +1743,7 @@ const openFromPayload = async (payload: OpenFilePayload) => {
     activateMountedViewer(result);
     await preparedContent.dispose();
   } catch (error) {
+    setPendingViewerPoseRestore(null);
     await preparedContent?.dispose();
     if (requestId !== state.currentRequestId) {
       return;
@@ -1569,6 +1776,72 @@ const openFromDialog = async () => {
   }
 
   await openFromPayload(payload);
+};
+
+const closeEditorMode = async () => {
+  if (editorRuntime.activeSession) {
+    await editorRuntime.activeSession.dispose();
+    editorRuntime.activeSession = null;
+  }
+
+  elements.editorFrame.src = 'about:blank';
+  state.mode = 'viewer';
+  render();
+};
+
+const captureEditorCameraPose = () => {
+  const editorWindow = elements.editorFrame.contentWindow as EditorEmbeddedWindow | null;
+  const pose = editorWindow?.__desktopGetCameraPose?.();
+  if (pose) {
+    applyInitialCameraPosePatch(pose);
+  }
+  return pose ?? null;
+};
+
+const returnFromEditorToViewer = async () => {
+  const payload = state.currentFile;
+  const editorPose = captureEditorCameraPose();
+  await closeEditorMode();
+  if (payload) {
+    await openFromPayload(payload, { viewerCameraPose: editorPose });
+  }
+};
+
+const openEditorInPlace = async () => {
+  if (state.uiState === 'loading') {
+    showWarning(t('waitCurrentLoad'));
+    return;
+  }
+
+  await ensureEditorAssets();
+
+  let launchSession: EditorLaunchSession | null = null;
+
+  try {
+    if (state.currentFile && isEditorTransferSupported(state.currentFile)) {
+      state.message = '';
+      render();
+      launchSession = await createEditorLaunchSession(state.currentFile);
+    } else if (state.currentFile) {
+      showWarning(t('editorUnsupportedCurrentScene'));
+    }
+
+    const editorRoute = buildEditorRoute(launchSession);
+    cleanupAllViewers();
+    await waitForViewerCleanup();
+
+    editorRuntime.activeSession = launchSession;
+    state.mode = 'editor';
+    state.message = '';
+    state.uiState = 'loading';
+    state.loadingPercent = null;
+    state.loadingCaption = t('editorLoading');
+    render();
+    elements.editorFrame.src = editorRoute;
+  } catch (error) {
+    await launchSession?.dispose();
+    showWarning(extractErrorMessage(error, t('editorLaunchFailed')));
+  }
 };
 
 const handleIncomingPayload = async (payload: OpenFilePayload | null) => {
@@ -1610,6 +1883,7 @@ const init = async () => {
   applyInitialCameraControlsState(getPersistedInitialCameraPose(), true);
   state.loadingCaption = t('selectLocalScene');
   render();
+  window.addEventListener('resize', updateShellMetrics);
 
   bindModelRotationField('rotationX');
   bindModelRotationField('rotationY');
@@ -1627,6 +1901,12 @@ const init = async () => {
   });
   elements.emptyOpenButton.addEventListener('click', () => {
     void openFromDialog();
+  });
+  elements.openEditorButton.addEventListener('click', () => {
+    void openEditorInPlace();
+  });
+  elements.backToViewerButton.addEventListener('click', () => {
+    void returnFromEditorToViewer();
   });
   elements.togglePanelButton.addEventListener('click', () => {
     state.inspectorOpen = !state.inspectorOpen;
@@ -1654,8 +1934,37 @@ const init = async () => {
     void handleIncomingPayload(payload);
   });
 
+  elements.editorFrame.addEventListener('load', () => {
+    if (state.mode !== 'editor') {
+      return;
+    }
+
+    state.uiState = 'ready';
+    state.message = '';
+    render();
+  });
+  elements.editorFrame.addEventListener('error', () => {
+    if (state.mode !== 'editor') {
+      return;
+    }
+
+    state.mode = 'viewer';
+    state.uiState = 'error';
+    showWarning(t('editorLaunchFailed'));
+  });
+  window.addEventListener('message', (event) => {
+    if (event.source !== elements.editorFrame.contentWindow) {
+      return;
+    }
+
+    if (event.data?.type === 'supersplat:back-to-viewer') {
+      void returnFromEditorToViewer();
+    }
+  });
+
   window.addEventListener('beforeunload', () => {
     cleanupAllViewers();
+    void closeEditorMode();
     disposeDragDrop();
     disposeFileOpen();
   });

@@ -1,5 +1,6 @@
 :root {
   color-scheme: dark;
+  --toolbar-offset: 82px;
   --chrome-bg: rgba(33, 34, 36, 0.82);
   --chrome-line: rgba(255, 255, 255, 0.08);
   --panel-bg: rgba(49, 54, 58, 0.82);
@@ -49,6 +50,24 @@ input {
   background: #0d0d0e;
 }
 
+.editor-stage {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: var(--toolbar-offset);
+  z-index: 3;
+  background: #111214;
+}
+
+.editor-stage__frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: #111214;
+}
+
 .viewer-slot {
   position: absolute;
   inset: 0;
@@ -81,13 +100,14 @@ input {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 16px;
-  min-height: 58px;
-  padding: 12px 24px;
-  background: linear-gradient(180deg, #39393a, #313133);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+  gap: 12px;
+  min-height: 50px;
+  padding: 0 12px;
+  background: #333;
+  border-bottom: 1px solid #3a3a3a;
+  box-shadow: none;
   pointer-events: auto;
+  font-family: "Helvetica Neue", Arial, Helvetica, sans-serif;
 }
 
 .toolbar__side {
@@ -98,11 +118,12 @@ input {
 
 .toolbar__side--left {
   justify-content: flex-start;
+  gap: 0;
 }
 
 .toolbar__side--right {
   justify-content: flex-end;
-  gap: 12px;
+  gap: 0;
 }
 
 .toolbar__center {
@@ -114,10 +135,10 @@ input {
 .toolbar__title {
   max-width: min(720px, 100%);
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.92);
-  font-size: 17px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
+  color: #e2e2e2;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -132,43 +153,64 @@ input {
 .toolbar__stats {
   max-width: 320px;
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.58);
+  color: #aaa;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.menu-trigger {
+.menu-trigger,
+.toolbar-action {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 0;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  padding: 16px 20px;
+  margin: 0;
   border: 0;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.84);
+  border-radius: 0;
+  background: #333;
+  color: #aaa;
   cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  transition: background-color 120ms ease, color 120ms ease;
+  appearance: none;
+}
+
+.menu-trigger:hover,
+.toolbar-action:hover {
+  color: #fff;
+  background-color: #282828;
+}
+
+.menu-trigger:active,
+.toolbar-action:active {
+  color: #fff;
+  background-color: #282828;
 }
 
 .menu-trigger__icon {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .menu-trigger__icon span {
   display: block;
-  width: 20px;
+  width: 16px;
   height: 1.5px;
   border-radius: 999px;
   background: currentColor;
-  opacity: 0.72;
 }
 
 .menu-trigger__label {
-  font-size: 15px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 .workspace {

@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 public/viewer
+public/editor
 public/licenses
 src-tauri/target
 src-tauri/gen
