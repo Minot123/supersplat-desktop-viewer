@@ -2,10 +2,13 @@ import './styles.css';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import packageJson from '../package.json';
 import type { OpenFilePayload } from './shared/files';
 
 type UiMode = 'viewer' | 'editor';
 type UiState = 'idle' | 'loading' | 'ready' | 'error';
+
+const APP_VERSION = packageJson.version;
 
 type ViewerConfig = {
   contentUrl: string;
@@ -17,6 +20,12 @@ type ViewerConfig = {
     rotation: [number, number, number];
     scale: number;
   };
+};
+
+type RuntimeCameraPose = {
+  fov?: number;
+  position?: [number, number, number];
+  target?: [number, number, number];
 };
 
 type DesktopCameraState = {
@@ -44,6 +53,18 @@ type DesktopInitialCameraPose = {
   targetX: number;
   targetY: number;
   targetZ: number;
+};
+
+type SsprojDocument = {
+  camera?: RuntimeCameraPose | null;
+  splats?: Array<{
+    position?: [number, number, number] | number[] | null;
+    rotation?: [number, number, number, number] | number[] | null;
+    scale?: [number, number, number] | number[] | null;
+  } | null> | null;
+  view?: {
+    bgColor?: [number, number, number, number] | number[] | null;
+  } | null;
 };
 
 type ViewerSceneStats = {
@@ -117,12 +138,14 @@ type PreparedContent = {
   contentUrl: string;
   contents: Promise<Response>;
   dispose: () => Promise<void>;
+  projectDocument: SsprojDocument | null;
 };
 
 type EditorLaunchSession = {
   cameraPose: DesktopInitialCameraPose | null;
   contentName: string;
   dispose: () => Promise<void>;
+  sceneTransform: DesktopSceneTransformState | null;
   sourcePath: string;
   streamUrl: string;
 };
@@ -392,6 +415,8 @@ const applyStaticText = () => {
 const getLaunchFile = () => invoke<OpenFilePayload | null>('get_launch_file');
 const openLocalHttpStream = (filePath: string) =>
   invoke<LocalHttpStreamOpenPayload | null>('open_local_http_stream', { filePath });
+const openRawLocalHttpStream = (filePath: string) =>
+  invoke<LocalHttpStreamOpenPayload | null>('open_raw_local_http_stream', { filePath });
 const resolveFilePath = (filePath: string) =>
   invoke<OpenFilePayload | null>('resolve_file_path', { filePath });
 const closeLocalHttpStream = (sessionId: number) =>
@@ -417,7 +442,10 @@ const isEditorTransferSupported = (payload: OpenFilePayload) => {
 };
 
 const buildEditorRoute = (
-  launchSession?: Pick<EditorLaunchSession, 'cameraPose' | 'contentName' | 'sourcePath' | 'streamUrl'> | null
+  launchSession?: Pick<
+    EditorLaunchSession,
+    'cameraPose' | 'contentName' | 'sceneTransform' | 'sourcePath' | 'streamUrl'
+  > | null
 ) => {
   const params = new URLSearchParams();
   params.set('desktop', '1');
@@ -429,6 +457,9 @@ const buildEditorRoute = (
     params.set('desktopSourcePath', launchSession.sourcePath);
     if (launchSession.cameraPose) {
       params.set('desktopCameraPose', JSON.stringify(launchSession.cameraPose));
+    }
+    if (launchSession.sceneTransform) {
+      params.set('desktopSceneTransform', JSON.stringify(launchSession.sceneTransform));
     }
   }
 
@@ -444,8 +475,10 @@ const getEditorTransferCameraPose = () => {
   );
 };
 
+const getEditorTransferSceneTransform = () => getActiveViewer()?.getDesktopSceneTransform?.() ?? null;
+
 const createEditorLaunchSession = async (payload: OpenFilePayload): Promise<EditorLaunchSession> => {
-  const streamSession = await openLocalHttpStream(payload.path);
+  const streamSession = await openRawLocalHttpStream(payload.path);
   if (!streamSession) {
     throw new Error(t('streamOpenFailed'));
   }
@@ -454,7 +487,8 @@ const createEditorLaunchSession = async (payload: OpenFilePayload): Promise<Edit
 
   return {
     cameraPose: getEditorTransferCameraPose(),
-    contentName: payload.contentName,
+    contentName: payload.name,
+    sceneTransform: payload.name.toLowerCase().endsWith('.ssproj') ? null : getEditorTransferSceneTransform(),
     sourcePath: payload.path,
     streamUrl: streamSession.streamUrl,
     dispose: async () => {
@@ -507,7 +541,7 @@ const formatExactCount = (value: number) =>
 
 const getSceneStatsText = () => {
   if (!state.currentFile) {
-    return t('openLocalScene');
+    return `${t('openLocalScene')} · v${APP_VERSION}`;
   }
 
   const segments: string[] = [];
@@ -515,6 +549,7 @@ const getSceneStatsText = () => {
     segments.push(`${formatExactCount(state.sceneNumSplats)} splats`);
   }
   segments.push(formatBytes(state.currentFile.sizeBytes));
+  segments.push(`v${APP_VERSION}`);
   return segments.join(' · ');
 };
 
@@ -628,6 +663,9 @@ const wrapAngle = (value: number) => {
 const getActiveViewer = () => viewerRuntime.activeViewer?.viewer ?? null;
 
 type RuntimeSettingsJson = {
+  background?: {
+    color?: [number, number, number];
+  };
   cameras?: Array<{
     initial?: {
       fov?: number;
@@ -766,6 +804,88 @@ const normalizeInitialCameraPose = (
     CAMERA_LIMITS.targetZ.max
   )
 });
+
+const parseSsprojDocument = (payload: OpenFilePayload | null | undefined): SsprojDocument | null => {
+  if (!payload?.projectJson) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(payload.projectJson) as SsprojDocument;
+  } catch {
+    return null;
+  }
+};
+
+const radiansToDegrees = (value: number) => value * 180 / Math.PI;
+
+const quaternionToEulerDegrees = (rotation: number[]): [number, number, number] => {
+  const [x = 0, y = 0, z = 0, w = 1] = rotation;
+  const sinrCosp = 2 * (w * x + y * z);
+  const cosrCosp = 1 - 2 * (x * x + y * y);
+  const roll = Math.atan2(sinrCosp, cosrCosp);
+  const sinp = 2 * (w * y - z * x);
+  const pitch = Math.abs(sinp) >= 1 ? Math.sign(sinp) * Math.PI / 2 : Math.asin(sinp);
+  const sinyCosp = 2 * (w * z + x * y);
+  const cosyCosp = 1 - 2 * (y * y + z * z);
+  const yaw = Math.atan2(sinyCosp, cosyCosp);
+
+  return [wrapAngle(radiansToDegrees(roll)), wrapAngle(radiansToDegrees(pitch)), wrapAngle(radiansToDegrees(yaw))];
+};
+
+const getSsprojSceneTransform = (document: SsprojDocument | null): DesktopSceneTransformState | null => {
+  const splat = document?.splats?.[0];
+  if (!splat) {
+    return null;
+  }
+
+  const rotation = Array.isArray(splat.rotation) ? quaternionToEulerDegrees(splat.rotation) : [
+    DEFAULT_SCENE_TRANSFORM.rotationX,
+    DEFAULT_SCENE_TRANSFORM.rotationY,
+    DEFAULT_SCENE_TRANSFORM.rotationZ
+  ];
+  const position = Array.isArray(splat.position) ? splat.position : [];
+  const scale = Array.isArray(splat.scale) ? splat.scale : [];
+
+  return normalizeSceneTransformState({
+    positionX: position[0],
+    positionY: position[1],
+    positionZ: position[2],
+    rotationX: rotation[0],
+    rotationY: rotation[1],
+    rotationZ: rotation[2],
+    scale: scale[0]
+  });
+};
+
+const getSsprojCameraPose = (document: SsprojDocument | null): DesktopInitialCameraPose | null => {
+  const camera = document?.camera;
+  if (!camera || !Array.isArray(camera.position) || !Array.isArray(camera.target)) {
+    return null;
+  }
+
+  return normalizeInitialCameraPose({
+    fov: camera.fov,
+    positionX: camera.position[0],
+    positionY: camera.position[1],
+    positionZ: camera.position[2],
+    targetX: camera.target[0],
+    targetY: camera.target[1],
+    targetZ: camera.target[2]
+  });
+};
+
+const applySsprojViewSettings = (settings: RuntimeSettingsJson, document: SsprojDocument | null) => {
+  const bgColor = document?.view?.bgColor;
+  if (!Array.isArray(bgColor) || bgColor.length < 3) {
+    return;
+  }
+
+  settings.background = {
+    ...(settings.background ?? {}),
+    color: [bgColor[0] ?? 0, bgColor[1] ?? 0, bgColor[2] ?? 0]
+  };
+};
 
 const getPersistedInitialCameraPose = () =>
   normalizeInitialCameraPose(readStoredJson<Partial<DesktopInitialCameraPose>>(STORAGE_KEYS.initialCameraPose));
@@ -1476,7 +1596,7 @@ const createViewerSlot = () => {
 
 const mountViewer = async (
   requestId: string,
-  preparedContent: { contentUrl: string; contents: Promise<Response> }
+  preparedContent: PreparedContent
 ) => {
   await ensureViewerAssets();
   viewerRuntime.nextSessionId += 1;
@@ -1585,13 +1705,34 @@ const mountViewer = async (
 
   const runtimeSettings = cloneSettingsJson(viewerRuntime.settingsJson as RuntimeSettingsJson);
   applySessionFovToSettings(runtimeSettings);
+  applySsprojViewSettings(runtimeSettings, preparedContent.projectDocument);
+  const projectSceneTransform = getSsprojSceneTransform(preparedContent.projectDocument);
+  const projectCameraPose = getSsprojCameraPose(preparedContent.projectDocument);
+
+  if (projectCameraPose) {
+    runtimeSettings.cameras = runtimeSettings.cameras ?? [];
+    runtimeSettings.cameras[0] = {
+      ...(runtimeSettings.cameras[0] ?? {}),
+      initial: {
+        fov: projectCameraPose.fov,
+        position: [projectCameraPose.positionX, projectCameraPose.positionY, projectCameraPose.positionZ],
+        target: [projectCameraPose.targetX, projectCameraPose.targetY, projectCameraPose.targetZ]
+      }
+    };
+  }
 
   const baseConfig: ViewerConfig = {
     contentUrl: preparedContent.contentUrl,
     contents: preparedContent.contents,
     noanim: true,
     reorder: !preparedContent.contentUrl.toLowerCase().endsWith('.ply'),
-    sceneTransform: getSessionSceneTransform()
+    sceneTransform: projectSceneTransform
+      ? {
+          position: [projectSceneTransform.positionX, projectSceneTransform.positionY, projectSceneTransform.positionZ],
+          rotation: [projectSceneTransform.rotationX, projectSceneTransform.rotationY, projectSceneTransform.rotationZ],
+          scale: projectSceneTransform.scale
+        }
+      : getSessionSceneTransform()
   };
 
   try {
@@ -1681,7 +1822,8 @@ const createPreparedContent = async (payload: OpenFilePayload): Promise<Prepared
     contents: fetch(streamSession.streamUrl, {
       cache: 'no-store'
     }),
-    dispose
+    dispose,
+    projectDocument: parseSsprojDocument(payload)
   };
 };
 

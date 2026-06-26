@@ -23,7 +23,7 @@ const extractViewerBody = (htmlSource) => {
 
 const patchViewerScript = (scriptSource) => {
   const originalSnippet = `const loadGsplat = async (app, config, progressCallback) => {
-    const { contents, contentUrl, unified, aa } = config;
+    const { contents, contentUrl } = config;
     const c = contents;
     const filename = new URL(contentUrl, location.href).pathname.split('/').pop();
     const data = filename.toLowerCase() === 'meta.json' ? await (await contents).json() : undefined;
@@ -81,8 +81,17 @@ const patchViewerScript = (scriptSource) => {
         this.__desktopFrameCamera = new Camera().copy(frameCamera);
         this.__desktopResetCamera = new Camera().copy(resetCamera);
         this.__desktopControllers = controllers;
-        controllers.orbit.controller.pitchRange = new Vec2(-180, 180);
-        controllers.fly.controller.pitchRange = new Vec2(-180, 180);
+        const desktopPitchRange = new Vec2(-180, 180);
+        if (controllers.orbit.controller?.pitchRange) {
+            controllers.orbit.controller.pitchRange = desktopPitchRange;
+        } else if (controllers.orbit.pitchRange) {
+            controllers.orbit.pitchRange = desktopPitchRange;
+        }
+        if (controllers.fly.controller?.pitchRange) {
+            controllers.fly.controller.pitchRange = desktopPitchRange;
+        } else if (controllers.fly.pitchRange) {
+            controllers.fly.pitchRange = desktopPitchRange;
+        }
         controllers.orbit.fov = resetCamera.fov;`;
 
   const cameraManagerAnchor = `            this.cameraManager = new CameraManager(global, sceneBound, collision);
@@ -93,39 +102,69 @@ const patchViewerScript = (scriptSource) => {
             this.cameraManager.__desktopGlobal = global;
             applyCamera(this.cameraManager.camera);`;
 
-  const viewerLoadAnchor = `            const gsplat = results[0].gsplat;
+  const viewerLoadAnchor = `            const gsplatComponent = results[0].gsplat;
             const collision = results[2];
             // get scene bounding box
-            const gsplatBbox = gsplat.customAabb;`;
+            const gsplatBbox = gsplatComponent.customAabb;`;
 
-  const viewerLoadPatched = `            const gsplat = results[0].gsplat;
+  const viewerLoadPatched = `            const gsplatComponent = results[0].gsplat;
             const collision = results[2];
             // get scene bounding box
-            const gsplatBbox = gsplat.customAabb;
+            const gsplatBbox = gsplatComponent.customAabb;
             this.__desktopGsplatEntity = results[0];
             this.__desktopSceneBound = sceneBound;
             this.__desktopGsplatBounds = gsplatBbox ?? null;`;
 
   const frameResetAnchor = `                case 'frame':
+                    events.fire('orbitTarget:clear');
                     state.cameraMode = 'orbit';
                     controllers.orbit.goto(frameCamera);
                     startTransition();
                     break;
                 case 'reset':
-                    state.cameraMode = 'orbit';
-                    controllers.orbit.goto(resetCamera);
-                    startTransition();
+                    if (state.cameraMode === 'walk') {
+                        walkSource.cancel();
+                        events.fire('navTarget:clear');
+                        startTransition();
+                        controllers.walk.resetToSpawn(target);
+                    }
+                    else if (state.cameraMode === 'fly') {
+                        flySource.cancel();
+                        startTransition();
+                        controllers.fly.resetToSpawn(target);
+                    }
+                    else {
+                        events.fire('orbitTarget:clear');
+                        state.cameraMode = 'orbit';
+                        controllers.orbit.goto(resetCamera);
+                        startTransition();
+                    }
                     break;`;
 
   const frameResetPatched = `                case 'frame':
+                    events.fire('orbitTarget:clear');
                     state.cameraMode = 'orbit';
                     controllers.orbit.goto(this.__desktopFrameCamera ?? frameCamera);
                     startTransition();
                     break;
                 case 'reset':
-                    state.cameraMode = 'orbit';
-                    controllers.orbit.goto(this.__desktopResetCamera ?? resetCamera);
-                    startTransition();
+                    if (state.cameraMode === 'walk') {
+                        walkSource.cancel();
+                        events.fire('navTarget:clear');
+                        startTransition();
+                        controllers.walk.resetToSpawn(target);
+                    }
+                    else if (state.cameraMode === 'fly') {
+                        flySource.cancel();
+                        startTransition();
+                        controllers.fly.resetToSpawn(target);
+                    }
+                    else {
+                        events.fire('orbitTarget:clear');
+                        state.cameraMode = 'orbit';
+                        controllers.orbit.goto(this.__desktopResetCamera ?? resetCamera);
+                        startTransition();
+                    }
                     break;`;
 
   const cameraManagerPatchAnchor = `            this.cameraManager = new CameraManager(global, sceneBound, collision);

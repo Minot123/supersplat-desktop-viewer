@@ -5,5 +5,6 @@ export type OpenFilePayload = {
   directory: string;
   name: string;
   path: string;
+  projectJson?: string | null;
   sizeBytes: number;
 };
