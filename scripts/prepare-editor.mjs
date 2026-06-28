@@ -25,6 +25,7 @@ const desktopBridgeScript = `<script>
   const params = new URLSearchParams(window.location.search);
   const streamUrl = params.get('load') ?? '';
   const sourcePath = params.get('desktopSourcePath') ?? '';
+  const desktopViewMode = params.get('desktopViewMode') ?? 'editor';
   const desktopProjectName = sourcePath.replace(/\\\\/g, '/').split('/').filter(Boolean).pop() || 'scene.ssproj';
   const rawCameraPose = params.get('desktopCameraPose');
   const rawSceneTransform = params.get('desktopSceneTransform');
@@ -44,8 +45,42 @@ const desktopBridgeScript = `<script>
   }
 
   document.body.dataset.desktopEmbedded = 'true';
+  document.body.dataset.desktopViewMode = desktopViewMode;
   if (sourcePath) {
     document.body.dataset.desktopSourcePath = sourcePath;
+  }
+
+  if (desktopViewMode === 'viewer') {
+    const style = document.createElement('style');
+    const hiddenChromeSelectors = [
+      'body[data-desktop-view-mode="viewer"] #app-container > :not(#editor-container)',
+      'body[data-desktop-view-mode="viewer"] #main-container > :not(#canvas-container)',
+      'body[data-desktop-view-mode="viewer"] #canvas-container > :not(canvas):not(#canvas)',
+      'body[data-desktop-view-mode="viewer"] #menu',
+      'body[data-desktop-view-mode="viewer"] #menu-bar',
+      'body[data-desktop-view-mode="viewer"] #top-container',
+      'body[data-desktop-view-mode="viewer"] #tools-container',
+      'body[data-desktop-view-mode="viewer"] #bottom-toolbar',
+      'body[data-desktop-view-mode="viewer"] #color-panel',
+      'body[data-desktop-view-mode="viewer"] #data-panel',
+      'body[data-desktop-view-mode="viewer"] #cursor-label',
+      'body[data-desktop-view-mode="viewer"] #app-label',
+      'body[data-desktop-view-mode="viewer"] #tooltips-container',
+      'body[data-desktop-view-mode="viewer"] .supersplat-desktop-viewer-button',
+      'body[data-desktop-view-mode="viewer"] .pcui-tooltip'
+    ];
+    const fullscreenSelectors = [
+      'body[data-desktop-view-mode="viewer"] #app-container',
+      'body[data-desktop-view-mode="viewer"] #editor-container',
+      'body[data-desktop-view-mode="viewer"] #main-container',
+      'body[data-desktop-view-mode="viewer"] #canvas-container'
+    ];
+    style.textContent = [
+      hiddenChromeSelectors.join(',\\n') + ' { display: none !important; }',
+      fullscreenSelectors.join(',\\n') + ' { inset: 0 !important; }',
+      'body[data-desktop-view-mode="viewer"] #canvas { display: block !important; width: 100% !important; height: 100% !important; }'
+    ].join('\\n');
+    document.head.appendChild(style);
   }
 
   const getCameraPose = () => {
@@ -292,16 +327,103 @@ const desktopBridgeScript = `<script>
     stickySceneTransformFramesRemaining = Math.max(stickySceneTransformFramesRemaining, frames);
   };
 
-  const applySceneTransform = () => {
-    if (!sceneTransform || userMovedScene || stickySceneTransformFramesRemaining <= 0) {
-      return false;
+  const getSceneSplat = () => {
+    const scene = window.scene;
+    const splatsByType = scene?.getElementsByType?.('splat') ?? [];
+    const splat = splatsByType.find?.((element) => (
+      element?.type === 'splat' &&
+      element?.splatData &&
+      element?.entity?.gsplat &&
+      typeof element.move === 'function'
+    )) ?? scene?.elements?.find?.((element) => (
+      element?.type === 'splat' &&
+      element?.splatData &&
+      element?.entity?.gsplat &&
+      typeof element.move === 'function'
+    ));
+    return splat && splat.entity ? splat : null;
+  };
+
+  const getSceneTransform = () => {
+    const entity = getSceneSplat()?.entity;
+    if (!entity) {
+      return null;
+    }
+
+    const position = entity.getLocalPosition?.();
+    const rotation = entity.getLocalEulerAngles?.() ?? entity.getLocalRotation?.()?.getEulerAngles?.();
+    const scale = entity.getLocalScale?.();
+    if (!position || !rotation || !scale) {
+      return null;
+    }
+
+    return {
+      positionX: position.x,
+      positionY: position.y,
+      positionZ: position.z,
+      rotationX: rotation.x,
+      rotationY: rotation.y,
+      rotationZ: rotation.z,
+      scale: scale.x
+    };
+  };
+
+  const mergeSceneTransform = (nextState) => ({
+    ...(getSceneTransform() ?? sceneTransform ?? {
+      positionX: 0,
+      positionY: 0,
+      positionZ: 0,
+      rotationX: 0,
+      rotationY: 0,
+      rotationZ: 180,
+      scale: 1
+    }),
+    ...(nextState ?? {})
+  });
+
+  const mergeCameraPose = (nextPose) => ({
+    ...(getCameraPose() ?? cameraPose ?? {
+      fov: 75,
+      positionX: 0,
+      positionY: 0,
+      positionZ: 0,
+      targetX: 0,
+      targetY: 0,
+      targetZ: 1
+    }),
+    ...(nextPose ?? {})
+  });
+
+  const applyViewerOnlyRenderSettings = () => {
+    if (desktopViewMode !== 'viewer') {
+      return;
+    }
+
+    const events = window.scene?.events;
+    if (!events?.fire) {
+      return;
+    }
+
+    events.fire('grid.setVisible', false);
+    events.fire('camera.setBound', false);
+    events.fire('camera.setBoundDimensions', false);
+    events.fire('camera.setOverlay', false);
+    events.fire('camera.setControlMode', 'fly');
+    if (window.scene?.camera) {
+      window.scene.camera.controlMode = 'fly';
+    }
+  };
+
+  const applySceneTransformNow = (transform) => {
+    if (!transform) {
+      return null;
     }
 
     const scene = window.scene;
-    const splat = scene?.elements?.find?.((element) => element?.entity && typeof element.move === 'function');
+    const splat = getSceneSplat();
     const entity = splat?.entity;
     if (!scene || !splat || !entity) {
-      return false;
+      return null;
     }
 
     const currentPosition = entity.getLocalPosition?.();
@@ -310,27 +432,39 @@ const desktopBridgeScript = `<script>
     const Vec3Ctor = currentPosition?.constructor;
     const QuatCtor = currentRotation?.constructor;
     if (!Vec3Ctor || !QuatCtor) {
-      return false;
+      return null;
     }
 
     const position = new Vec3Ctor(
-      Number.isFinite(sceneTransform.positionX) ? sceneTransform.positionX : currentPosition.x,
-      Number.isFinite(sceneTransform.positionY) ? sceneTransform.positionY : currentPosition.y,
-      Number.isFinite(sceneTransform.positionZ) ? sceneTransform.positionZ : currentPosition.z
+      Number.isFinite(transform.positionX) ? transform.positionX : currentPosition.x,
+      Number.isFinite(transform.positionY) ? transform.positionY : currentPosition.y,
+      Number.isFinite(transform.positionZ) ? transform.positionZ : currentPosition.z
     );
     const rotation = new QuatCtor();
     rotation.setFromEulerAngles(
-      Number.isFinite(sceneTransform.rotationX) ? sceneTransform.rotationX : 0,
-      Number.isFinite(sceneTransform.rotationY) ? sceneTransform.rotationY : 0,
-      Number.isFinite(sceneTransform.rotationZ) ? sceneTransform.rotationZ : 0
+      Number.isFinite(transform.rotationX) ? transform.rotationX : 0,
+      Number.isFinite(transform.rotationY) ? transform.rotationY : 0,
+      Number.isFinite(transform.rotationZ) ? transform.rotationZ : 0
     );
-    const scaleValue = Number.isFinite(sceneTransform.scale) ? sceneTransform.scale : currentScale?.x ?? 1;
+    const scaleValue = Number.isFinite(transform.scale) ? transform.scale : currentScale?.x ?? 1;
     const scale = new Vec3Ctor(scaleValue, scaleValue, scaleValue);
     splat.move(position, rotation, scale);
     scene.boundDirty = true;
     scene.forceRender = true;
-    stickySceneTransformFramesRemaining -= 1;
     successfulSceneTransformApplications += 1;
+    return getSceneTransform() ?? transform;
+  };
+
+  const applySceneTransform = () => {
+    if (!sceneTransform || userMovedScene || stickySceneTransformFramesRemaining <= 0) {
+      return false;
+    }
+
+    if (!applySceneTransformNow(sceneTransform)) {
+      return false;
+    }
+
+    stickySceneTransformFramesRemaining -= 1;
     return true;
   };
 
@@ -363,6 +497,37 @@ const desktopBridgeScript = `<script>
     successfulCameraApplications += 1;
     return true;
   };
+
+  const setSceneTransform = (nextState) => {
+    sceneTransform = mergeSceneTransform(nextState);
+    userMovedScene = false;
+    stickySceneTransformFramesRemaining = 0;
+    return applySceneTransformNow(sceneTransform) ?? sceneTransform;
+  };
+
+  const setInitialCameraPose = (nextPose) => {
+    cameraPose = mergeCameraPose(nextPose);
+    userMovedCamera = false;
+    stickyCameraFramesRemaining = Math.max(stickyCameraFramesRemaining, 60);
+    applyCameraPose();
+    return getCameraPose() ?? cameraPose;
+  };
+
+  const resetCamera = () => setInitialCameraPose(cameraPose ?? getCameraPose());
+
+  const frameScene = () => {
+    try {
+      window.scene?.events?.fire?.('camera.focus');
+    } catch {}
+    return getCameraPose() ?? cameraPose;
+  };
+
+  window.__desktopGetSceneTransform = getSceneTransform;
+  window.__desktopSetSceneTransform = setSceneTransform;
+  window.__desktopSetInitialCameraPose = setInitialCameraPose;
+  window.__desktopResetCamera = resetCamera;
+  window.__desktopFrameScene = frameScene;
+  window.__desktopGetSceneStats = () => ({ numSplats: getDesktopLoadedSplatCount() });
 
   const ensureSceneHooks = () => {
     if (sceneHooksAttached) {
@@ -403,6 +568,7 @@ const desktopBridgeScript = `<script>
 
   const applyDesktopOverrides = () => {
     replaceMatchingText();
+    applyViewerOnlyRenderSettings();
     tryApplyCameraPose();
     applySceneTransform();
   };

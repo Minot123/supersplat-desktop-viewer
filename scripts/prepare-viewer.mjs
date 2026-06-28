@@ -64,6 +64,17 @@ const patchViewerScript = (scriptSource) => {
             entity.setLocalScale(desktopSceneScale, desktopSceneScale, desktopSceneScale);
             entity.addComponent('gsplat', {`;
 
+  const componentOptionsAnchor = `            entity.addComponent('gsplat', {
+                unified: true,
+                asset
+            });`;
+
+  const componentOptionsPatched = `            entity.addComponent('gsplat', {
+                unified: unified ?? true,
+                highQualitySH: true,
+                asset
+            });`;
+
   const controllersAnchor = `        const controllers = {
             orbit: new OrbitController(),
             fly: new FlyController(),
@@ -177,6 +188,80 @@ const patchViewerScript = (scriptSource) => {
             this.cameraManager.__desktopGlobal = global;
             this.cameraManager.__desktopSceneBound = sceneBound;
             applyCamera(this.cameraManager.camera);`;
+
+  const pointerLockAnchor = `    _activate() {
+        if (this._keyboardMouse) {
+            this._keyboardMouse.source._pointerLock = true;
+        }
+        if (document.pointerLockElement !== this._canvas) {
+            this._canvas?.requestPointerLock();
+        }
+    }`;
+
+  const pointerLockPatched = `    _activate() {
+        // Desktop shell keeps editor-style visible cursor controls.
+        if (this._keyboardMouse) {
+            this._keyboardMouse.source._pointerLock = false;
+        }
+        if (document.pointerLockElement === this._canvas) {
+            document.exitPointerLock();
+        }
+    }`;
+
+  const nonUnifiedReadyAnchor = `            eventHandler.on('frame:ready', readyHandler);`;
+
+  const nonUnifiedReadyPatched = `            if (config.unified === false) {
+                readyHandler(camera.camera, null, true, 0);
+            } else {
+                eventHandler.on('frame:ready', readyHandler);
+            }`;
+
+  const softSplatGlslVertexAnchor = `	if (clr.w <= alphaClipValue) {
+		gl_Position = discardVec;
+		return;
+	}
+	clipCorner(corner, clr.w);`;
+
+  const softSplatGlslVertexPatched = `	// Desktop viewer matches SuperSplat Editor: keep low-alpha gaussian tails in forward rendering.
+	// The engine viewer's alphaClipForward path trims them and makes PLY transitions look harsher.`;
+
+  const softSplatGlslFragmentAnchor = `		if (alpha < alphaClipForward) {
+			discard;
+		}`;
+
+  const softSplatGlslFragmentPatched = `		// Desktop viewer matches SuperSplat Editor: do not discard low-alpha forward fragments.
+		// The alpha is still premultiplied below.`;
+
+  const noOpacityDitherGlslAnchor = `		#ifndef DITHER_NONE
+			opacityDither(alpha, id * 0.013);
+		#endif`;
+
+  const noOpacityDitherGlslPatched = `		// Desktop viewer matches SuperSplat Editor: do not dither splat opacity.
+		// Editor blends gaussian tails directly, which keeps color transitions soft.`;
+
+  const softSplatWgslVertexAnchor = `	if (clr.w <= alphaClipValue) {
+		output.position = discardVec;
+		return output;
+	}
+	clipCorner(&corner, clr.w);`;
+
+  const softSplatWgslVertexPatched = `	// Desktop viewer matches SuperSplat Editor: keep low-alpha gaussian tails in forward rendering.
+	// The engine viewer's alphaClipForward path trims them and makes PLY transitions look harsher.`;
+
+  const softSplatWgslFragmentAnchor = `		if (alpha < half(uniform.alphaClipForward)) {
+			discard;
+			return output;
+		}`;
+
+  const softSplatWgslFragmentPatched = `		// Desktop viewer matches SuperSplat Editor: do not discard low-alpha forward fragments.
+		// The alpha is still premultiplied below.`;
+
+  const noOpacityDitherWgslAnchor = `		#ifndef DITHER_NONE
+			opacityDither(f32(alpha), id * 0.013);
+		#endif`;
+
+  const noOpacityDitherWgslPatched = `		// Desktop viewer matches SuperSplat Editor: do not dither splat opacity.
+		// Editor blends gaussian tails directly, which keeps color transitions soft.`;
 
   const exportAnchor = `export { main };`;
 
@@ -429,6 +514,12 @@ Viewer.prototype.applyDesktopDefaults = function() {
 
   patchedSource = patchedSource.replace(entityAnchor, entityPatched);
 
+  if (!patchedSource.includes(componentOptionsAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: gsplat component options anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(componentOptionsAnchor, componentOptionsPatched);
+
   if (!patchedSource.includes(controllersAnchor)) {
     throw new Error('Unable to patch upstream viewer index.js: desktop controllers anchor not found');
   }
@@ -458,6 +549,54 @@ Viewer.prototype.applyDesktopDefaults = function() {
   }
 
   patchedSource = patchedSource.replace(cameraManagerPatchAnchor, cameraManagerPatchApplied);
+
+  if (!patchedSource.includes(pointerLockAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: pointer lock anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(pointerLockAnchor, pointerLockPatched);
+
+  if (!patchedSource.includes(nonUnifiedReadyAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: non-unified ready anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(nonUnifiedReadyAnchor, nonUnifiedReadyPatched);
+
+  if (!patchedSource.includes(softSplatGlslVertexAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: GLSL soft splat vertex anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(softSplatGlslVertexAnchor, softSplatGlslVertexPatched);
+
+  if (!patchedSource.includes(softSplatGlslFragmentAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: GLSL soft splat fragment anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(softSplatGlslFragmentAnchor, softSplatGlslFragmentPatched);
+
+  if (!patchedSource.includes(noOpacityDitherGlslAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: GLSL opacity dither anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(noOpacityDitherGlslAnchor, noOpacityDitherGlslPatched);
+
+  if (!patchedSource.includes(softSplatWgslVertexAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: WGSL soft splat vertex anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(softSplatWgslVertexAnchor, softSplatWgslVertexPatched);
+
+  if (!patchedSource.includes(softSplatWgslFragmentAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: WGSL soft splat fragment anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(softSplatWgslFragmentAnchor, softSplatWgslFragmentPatched);
+
+  if (!patchedSource.includes(noOpacityDitherWgslAnchor)) {
+    throw new Error('Unable to patch upstream viewer index.js: WGSL opacity dither anchor not found');
+  }
+
+  patchedSource = patchedSource.replace(noOpacityDitherWgslAnchor, noOpacityDitherWgslPatched);
 
   if (!patchedSource.includes(exportAnchor)) {
     throw new Error('Unable to patch upstream viewer index.js: export anchor not found');

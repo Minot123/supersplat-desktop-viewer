@@ -10,6 +10,8 @@ type UiState = 'idle' | 'loading' | 'ready' | 'error';
 
 const APP_VERSION = packageJson.version;
 
+type ViewerTonemapping = 'none' | 'linear' | 'filmic' | 'hejl' | 'aces' | 'aces2' | 'neutral';
+
 type ViewerConfig = {
   contentUrl: string;
   contents: Promise<Response>;
@@ -20,12 +22,14 @@ type ViewerConfig = {
     rotation: [number, number, number];
     scale: number;
   };
+  unified?: boolean;
 };
 
 type RuntimeCameraPose = {
   fov?: number;
   position?: [number, number, number];
   target?: [number, number, number];
+  tonemapping?: ViewerTonemapping | null;
 };
 
 type DesktopCameraState = {
@@ -130,6 +134,7 @@ type ViewerMain = (
 
 type MountedViewer = {
   cleanup: () => void;
+  removeRoot?: boolean;
   root: HTMLDivElement;
   viewer: ViewerInstance | null;
 };
@@ -152,6 +157,12 @@ type EditorLaunchSession = {
 
 type EditorEmbeddedWindow = Window & {
   __desktopGetCameraPose?: () => DesktopInitialCameraPose | null;
+  __desktopFrameScene?: () => DesktopInitialCameraPose | null;
+  __desktopGetSceneStats?: () => ViewerSceneStats | null;
+  __desktopGetSceneTransform?: () => DesktopSceneTransformState | null;
+  __desktopResetCamera?: () => DesktopInitialCameraPose | null;
+  __desktopSetInitialCameraPose?: (nextPose: Partial<DesktopInitialCameraPose>) => DesktopInitialCameraPose | null;
+  __desktopSetSceneTransform?: (nextState: Partial<DesktopSceneTransformState>) => DesktopSceneTransformState | null;
 };
 
 type LocalHttpStreamOpenPayload = {
@@ -201,6 +212,7 @@ const viewerRuntime = {
   bodyMarkup: null as string | null,
   bodyTemplate: null as HTMLTemplateElement | null,
   activeViewer: null as MountedViewer | null,
+  editorBacked: false,
   mainFn: null as ViewerMain | null,
   nextSessionId: 1,
   settingsJson: null as unknown
@@ -445,11 +457,13 @@ const buildEditorRoute = (
   launchSession?: Pick<
     EditorLaunchSession,
     'cameraPose' | 'contentName' | 'sceneTransform' | 'sourcePath' | 'streamUrl'
-  > | null
+  > | null,
+  options: { desktopViewMode?: 'editor' | 'viewer' } = {}
 ) => {
   const params = new URLSearchParams();
   params.set('desktop', '1');
   params.set('lng', 'en');
+  params.set('desktopViewMode', options.desktopViewMode ?? 'editor');
 
   if (launchSession) {
     params.set('load', launchSession.streamUrl);
@@ -475,7 +489,21 @@ const getEditorTransferCameraPose = () => {
   );
 };
 
-const getEditorTransferSceneTransform = () => getActiveViewer()?.getDesktopSceneTransform?.() ?? null;
+const getSessionSceneTransformState = (): DesktopSceneTransformState => {
+  const sessionTransform = getSessionSceneTransform();
+  return normalizeSceneTransformState({
+    positionX: sessionTransform.position[0],
+    positionY: sessionTransform.position[1],
+    positionZ: sessionTransform.position[2],
+    rotationX: sessionTransform.rotation[0],
+    rotationY: sessionTransform.rotation[1],
+    rotationZ: sessionTransform.rotation[2],
+    scale: sessionTransform.scale
+  });
+};
+
+const getEditorTransferSceneTransform = () =>
+  getActiveViewer()?.getDesktopSceneTransform?.() ?? getSessionSceneTransformState();
 
 const createEditorLaunchSession = async (payload: OpenFilePayload): Promise<EditorLaunchSession> => {
   const streamSession = await openRawLocalHttpStream(payload.path);
@@ -680,6 +708,7 @@ type RuntimeSettingsJson = {
       scale?: number;
     };
   };
+  tonemapping?: ViewerTonemapping;
 };
 
 const cloneSettingsJson = <T>(value: T): T => {
@@ -817,6 +846,16 @@ const parseSsprojDocument = (payload: OpenFilePayload | null | undefined): Sspro
   }
 };
 
+const VALID_VIEWER_TONEMAPPINGS = new Set<ViewerTonemapping>([
+  'none',
+  'linear',
+  'filmic',
+  'hejl',
+  'aces',
+  'aces2',
+  'neutral'
+]);
+
 const radiansToDegrees = (value: number) => value * 180 / Math.PI;
 
 const quaternionToEulerDegrees = (rotation: number[]): [number, number, number] => {
@@ -877,14 +916,17 @@ const getSsprojCameraPose = (document: SsprojDocument | null): DesktopInitialCam
 
 const applySsprojViewSettings = (settings: RuntimeSettingsJson, document: SsprojDocument | null) => {
   const bgColor = document?.view?.bgColor;
-  if (!Array.isArray(bgColor) || bgColor.length < 3) {
-    return;
+  if (Array.isArray(bgColor) && bgColor.length >= 3) {
+    settings.background = {
+      ...(settings.background ?? {}),
+      color: [bgColor[0] ?? 0, bgColor[1] ?? 0, bgColor[2] ?? 0]
+    };
   }
 
-  settings.background = {
-    ...(settings.background ?? {}),
-    color: [bgColor[0] ?? 0, bgColor[1] ?? 0, bgColor[2] ?? 0]
-  };
+  const tonemapping = document?.camera?.tonemapping;
+  if (tonemapping && VALID_VIEWER_TONEMAPPINGS.has(tonemapping)) {
+    settings.tonemapping = tonemapping;
+  }
 };
 
 const getPersistedInitialCameraPose = () =>
@@ -1193,6 +1235,20 @@ const applySceneTransformPatch = (patch: Partial<DesktopSceneTransformState>) =>
   applyModelRotationControlsState(nextState, true);
 };
 
+const resetSceneTransformToDefault = () => {
+  const viewer = getActiveViewer();
+  if (!viewer?.setDesktopSceneTransform) {
+    rememberSessionRotation(DEFAULT_SCENE_TRANSFORM);
+    applyModelRotationControlsState(DEFAULT_SCENE_TRANSFORM, true);
+    return null;
+  }
+
+  const nextState = viewer.setDesktopSceneTransform(DEFAULT_SCENE_TRANSFORM);
+  rememberSessionRotation(nextState ?? DEFAULT_SCENE_TRANSFORM);
+  applyModelRotationControlsState(DEFAULT_SCENE_TRANSFORM, true);
+  return nextState;
+};
+
 const applyInitialCameraPosePatch = (patch: Partial<DesktopInitialCameraPose>) => {
   rememberSessionFov(patch.fov);
   const viewer = getActiveViewer();
@@ -1318,6 +1374,7 @@ const bindInitialCameraFovField = () => {
 const render = () => {
   const hasFile = Boolean(state.currentFile);
   const inEditorMode = state.mode === 'editor';
+  const showEditorStage = inEditorMode || (viewerRuntime.editorBacked && hasFile);
   const cameraPanelEnabled = !inEditorMode && hasFile && state.uiState === 'ready' && Boolean(getActiveViewer());
   const panelVisible = !inEditorMode && hasFile && state.inspectorOpen;
 
@@ -1337,7 +1394,7 @@ const render = () => {
   elements.sceneStats.textContent = getSceneStatsText();
 
   elements.emptyState.hidden = hasFile || inEditorMode;
-  elements.editorStage.hidden = !inEditorMode;
+  elements.editorStage.hidden = !showEditorStage;
   elements.cameraPanel.hidden = !panelVisible;
   elements.toolbar.hidden = inEditorMode;
   elements.fileName.textContent = state.currentFile?.name ?? 'SuperSplat Desktop Viewer';
@@ -1546,7 +1603,9 @@ const destroyMountedViewer = (mounted: MountedViewer | null) => {
   try {
     mounted.cleanup();
   } finally {
-    mounted.root.remove();
+    if (mounted.removeRoot !== false) {
+      mounted.root.remove();
+    }
   }
 };
 
@@ -1721,11 +1780,14 @@ const mountViewer = async (
     };
   }
 
+  const currentFileName = state.currentFile?.name.toLowerCase() ?? '';
+  const useUnifiedRenderer = currentFileName.endsWith('.meta.json') || currentFileName.endsWith('.lod-meta.json');
   const baseConfig: ViewerConfig = {
     contentUrl: preparedContent.contentUrl,
     contents: preparedContent.contents,
     noanim: true,
-    reorder: !preparedContent.contentUrl.toLowerCase().endsWith('.ply'),
+    reorder: preparedContent.projectDocument ? false : true,
+    unified: useUnifiedRenderer,
     sceneTransform: projectSceneTransform
       ? {
           position: [projectSceneTransform.positionX, projectSceneTransform.positionY, projectSceneTransform.positionZ],
@@ -1765,6 +1827,116 @@ const mountViewer = async (
   }
 };
 
+const getEditorFrameWindow = () => elements.editorFrame.contentWindow as EditorEmbeddedWindow | null;
+
+const poseToCameraState = (pose: DesktopInitialCameraPose | null | undefined): DesktopCameraState | null => {
+  if (!pose) {
+    return null;
+  }
+
+  return {
+    fov: pose.fov,
+    x: pose.positionX,
+    y: pose.positionY,
+    z: pose.positionZ
+  };
+};
+
+const createEditorBackedViewerAdapter = (): ViewerInstance => ({
+  frameDesktopScene: () => poseToCameraState(getEditorFrameWindow()?.__desktopFrameScene?.() ?? null),
+  getDesktopCurrentCameraPose: () => getEditorFrameWindow()?.__desktopGetCameraPose?.() ?? null,
+  getDesktopInitialCameraPose: () => getEditorFrameWindow()?.__desktopGetCameraPose?.() ?? getPersistedInitialCameraPose(),
+  getDesktopSceneStats: () => getEditorFrameWindow()?.__desktopGetSceneStats?.() ?? null,
+  getDesktopSceneTransform: () =>
+    getEditorFrameWindow()?.__desktopGetSceneTransform?.() ?? getSessionSceneTransformState(),
+  resetDesktopCamera: () => poseToCameraState(getEditorFrameWindow()?.__desktopResetCamera?.() ?? null),
+  setDesktopInitialCameraPose: (nextPose) =>
+    getEditorFrameWindow()?.__desktopSetInitialCameraPose?.(nextPose) ??
+    persistInitialCameraPose(nextPose),
+  setDesktopSceneTransform: (nextState) =>
+    getEditorFrameWindow()?.__desktopSetSceneTransform?.(nextState) ??
+    normalizeSceneTransformState(nextState)
+});
+
+const waitForEditorBackedViewerReady = async (requestId: string, adapter: ViewerInstance, route: string) => {
+  await new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      elements.editorFrame.removeEventListener('load', onLoad);
+      reject(new Error(t('sceneOpenError')));
+    }, 60000);
+
+    const onLoad = () => {
+      window.clearTimeout(timeout);
+      resolve();
+    };
+
+    elements.editorFrame.addEventListener('load', onLoad, { once: true });
+    elements.editorFrame.src = route;
+  });
+
+  state.loadingPercent = 100;
+  state.loadingCaption = t('preparingFirstFrame');
+  render();
+
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    if (requestId !== state.currentRequestId) {
+      throw new Error(t('sceneOpenError'));
+    }
+
+    const stats = adapter.getDesktopSceneStats?.();
+    if ((stats?.numSplats ?? 0) > 0) {
+      return;
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+  }
+
+  throw new Error(t('sceneOpenError'));
+};
+
+const mountEditorBackedViewer = async (requestId: string, payload: OpenFilePayload) => {
+  await ensureEditorAssets();
+  const launchSession = await createEditorLaunchSession(payload);
+  const loadStartedAt = performance.now();
+  const viewer = createEditorBackedViewerAdapter();
+  let disposed = false;
+
+  viewerRuntime.editorBacked = true;
+  state.loadingCaption = t('editorLoading');
+  render();
+
+  const mounted: MountedViewer = {
+    cleanup: () => {
+      if (disposed) {
+        return;
+      }
+
+      disposed = true;
+      elements.editorFrame.src = 'about:blank';
+      void launchSession.dispose();
+      viewerRuntime.editorBacked = false;
+    },
+    removeRoot: false,
+    root: elements.editorStage,
+    viewer
+  };
+
+  try {
+    await waitForEditorBackedViewerReady(
+      requestId,
+      viewer,
+      buildEditorRoute(launchSession, { desktopViewMode: 'viewer' })
+    );
+    return {
+      loadMs: performance.now() - loadStartedAt,
+      mounted
+    };
+  } catch (error) {
+    destroyMountedViewer(mounted);
+    throw error;
+  }
+};
+
 const activateMountedViewer = (result: { loadMs: number; mounted: MountedViewer }) => {
   const pendingViewerPose = consumePendingViewerPoseRestore();
   viewerRuntime.activeViewer = result.mounted;
@@ -1785,6 +1957,7 @@ const activateMountedViewer = (result: { loadMs: number; mounted: MountedViewer 
 const cleanupAllViewers = () => {
   destroyMountedViewer(viewerRuntime.activeViewer);
   viewerRuntime.activeViewer = null;
+  viewerRuntime.editorBacked = false;
   window.firstFrame = undefined;
   window.scrubTo = undefined;
   window.animationDuration = undefined;
@@ -1854,6 +2027,24 @@ const openFromPayload = async (
   let preparedContent: PreparedContent | null = null;
 
   try {
+    cleanupAllViewers();
+    await waitForViewerCleanup();
+
+    if (requestId !== state.currentRequestId) {
+      return;
+    }
+
+    if (isEditorTransferSupported(payload)) {
+      const result = await mountEditorBackedViewer(requestId, payload);
+      if (requestId !== state.currentRequestId) {
+        destroyMountedViewer(result.mounted);
+        return;
+      }
+
+      activateMountedViewer(result);
+      return;
+    }
+
     preparedContent = await createPreparedContent(payload);
     const response = await preparedContent.contents;
     if (!response.ok) {
@@ -1867,13 +2058,6 @@ const openFromPayload = async (
     preparedContent.contents = Promise.resolve(response);
     state.loadingCaption = t('preparingNewScene');
     render();
-
-    cleanupAllViewers();
-    await waitForViewerCleanup();
-
-    if (requestId !== state.currentRequestId) {
-      return;
-    }
 
     const result = await mountViewer(requestId, preparedContent);
     if (requestId !== state.currentRequestId) {
@@ -2063,6 +2247,7 @@ const init = async () => {
     }
   });
   elements.resetViewButton.addEventListener('click', () => {
+    resetSceneTransformToDefault();
     const nextState = getActiveViewer()?.resetDesktopCamera?.();
     if (nextState) {
       window.setTimeout(() => {
