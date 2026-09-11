@@ -1,6 +1,6 @@
 # SuperSplat Desktop Viewer
 
-Lightweight offline Windows desktop viewer for 3D Gaussian Splat scenes, built with Tauri, TypeScript, and `@playcanvas/supersplat-viewer`.
+Lightweight offline Windows desktop viewer for 3D Gaussian Splat scenes, built with Tauri, TypeScript, SuperSplat Editor, and `@playcanvas/supersplat-viewer`.
 
 [Download the latest release](https://github.com/Minot123/supersplat-desktop-viewer/releases/latest) or browse all [Releases](https://github.com/Minot123/supersplat-desktop-viewer/releases).
 

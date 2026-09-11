@@ -1,4 +1,5 @@
 use serde::Serialize;
+mod http_file;
 use std::{
     collections::HashMap,
     env, fs,
@@ -427,6 +428,7 @@ fn handle_local_http_client(
     let method = request_parts.next().unwrap_or_default();
     let target = request_parts.next().unwrap_or_default();
     let mut content_length = None;
+    let mut range = None;
 
     loop {
         let mut line = String::new();
@@ -439,6 +441,9 @@ fn handle_local_http_client(
             if name.eq_ignore_ascii_case("content-length") {
                 content_length = value.trim().parse::<u64>().ok();
             }
+            if name.eq_ignore_ascii_case("range") {
+                range = Some(value.trim().to_owned());
+            }
         }
     }
 
@@ -446,7 +451,7 @@ fn handle_local_http_client(
         return write_http_response(&mut stream, "204 No Content", "text/plain", Some(0), b"");
     }
 
-    if !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("PUT") {
+    if !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("PUT") && !method.eq_ignore_ascii_case("HEAD") {
         return write_http_response(
             &mut stream,
             "405 Method Not Allowed",
@@ -525,6 +530,13 @@ fn handle_local_http_client(
         return save_scene_file_upload(&mut stream, &mut reader, scene, content_length);
     }
 
+    if let LocalHttpStreamSource::File(path) = &scene.source {
+        let mut file = fs::File::open(path)?;
+        return http_file::serve(&mut stream, &mut file, &scene.content_type, range.as_deref(), method.eq_ignore_ascii_case("HEAD"));
+    }
+    if method.eq_ignore_ascii_case("HEAD") {
+        return write_http_response(&mut stream, "200 OK", &scene.content_type, Some(scene.size_bytes), b"");
+    }
     stream_scene_file(&mut stream, scene)
 }
 

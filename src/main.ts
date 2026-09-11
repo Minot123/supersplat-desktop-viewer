@@ -73,6 +73,8 @@ type SsprojDocument = {
 
 type ViewerSceneStats = {
   numSplats: number | null;
+  firstFrameRendered?: boolean;
+  loadError?: string | null;
 };
 
 type ViewerApp = {
@@ -156,6 +158,7 @@ type EditorLaunchSession = {
 };
 
 type EditorEmbeddedWindow = Window & {
+  __desktopReleaseScene?: () => void;
   __desktopGetCameraPose?: () => DesktopInitialCameraPose | null;
   __desktopFrameScene?: () => DesktopInitialCameraPose | null;
   __desktopGetSceneStats?: () => ViewerSceneStats | null;
@@ -1874,24 +1877,32 @@ const waitForEditorBackedViewerReady = async (requestId: string, adapter: Viewer
     elements.editorFrame.src = route;
   });
 
-  state.loadingPercent = 100;
-  state.loadingCaption = t('preparingFirstFrame');
+  state.loadingPercent = null;
+  state.loadingCaption = 'Reading and preparing scene';
   render();
 
-  for (let attempt = 0; attempt < 600; attempt += 1) {
+  const deadline = performance.now() + 10 * 60 * 1000;
+  while (performance.now() < deadline) {
     if (requestId !== state.currentRequestId) {
       throw new Error(t('sceneOpenError'));
     }
 
     const stats = adapter.getDesktopSceneStats?.();
-    if ((stats?.numSplats ?? 0) > 0) {
+    if (stats?.loadError) {
+      throw new Error(stats.loadError);
+    }
+    if ((stats?.numSplats ?? 0) > 0 && stats?.firstFrameRendered) {
       return;
+    }
+    if ((stats?.numSplats ?? 0) > 0 && state.loadingCaption !== t('preparingFirstFrame')) {
+      state.loadingCaption = t('preparingFirstFrame');
+      render();
     }
 
     await new Promise((resolve) => window.setTimeout(resolve, 100));
   }
 
-  throw new Error(t('sceneOpenError'));
+  throw new Error('Scene preparation timed out after 10 minutes. Try closing other GPU-intensive applications.');
 };
 
 const mountEditorBackedViewer = async (requestId: string, payload: OpenFilePayload) => {
@@ -1912,8 +1923,15 @@ const mountEditorBackedViewer = async (requestId: string, payload: OpenFilePaylo
       }
 
       disposed = true;
+      try {
+        getEditorFrameWindow()?.__desktopReleaseScene?.();
+      } catch (error) {
+        console.warn('Unable to release editor scene before navigation', error);
+      }
       elements.editorFrame.src = 'about:blank';
-      void launchSession.dispose();
+      pendingEditorCleanup = launchSession.dispose().catch((error) => {
+        console.warn('Unable to close local scene session', error);
+      });
       viewerRuntime.editorBacked = false;
     },
     removeRoot: false,
@@ -1963,7 +1981,9 @@ const cleanupAllViewers = () => {
   window.animationDuration = undefined;
 };
 
+let pendingEditorCleanup: Promise<void> = Promise.resolve();
 const waitForViewerCleanup = async () => {
+  await pendingEditorCleanup;
   await new Promise<void>((resolve) => {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => resolve());

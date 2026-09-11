@@ -40,6 +40,16 @@ const checks = [
     prepareViewer.includes('Desktop viewer matches SuperSplat Editor: do not dither splat opacity') &&
       publicViewer.includes('Desktop viewer matches SuperSplat Editor: do not dither splat opacity') &&
       !publicViewer.includes('opacityDither(alpha, id * 0.013);')
+  ],
+  [
+    'WGSL soft-fragment patch matches the PlayCanvas 2.21 shader shape',
+    prepareViewer.includes(`\t\tif (alpha < half(uniform.alphaClipForward)) {
+\t\t\tdiscard;
+\t\t}`) &&
+      !prepareViewer.includes(`\t\tif (alpha < half(uniform.alphaClipForward)) {
+\t\t\t\tdiscard;
+\t\t\t\treturn output;
+\t\t\t}`)
   ]
 ];
 

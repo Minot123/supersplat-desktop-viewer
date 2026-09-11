@@ -23,16 +23,19 @@ const extractViewerBody = (htmlSource) => {
 
 const patchViewerScript = (scriptSource) => {
   const originalSnippet = `const loadGsplat = async (app, config, progressCallback) => {
-    const { contents, contentUrl } = config;
+    const { contents, contentUrl, contentFilename } = config;
     const c = contents;
-    const filename = new URL(contentUrl, location.href).pathname.split('/').pop();
+    // the filename's extension selects the gsplat parser, so a url with no usable name (a
+    // data: uri) needs the config to name its content instead; falsy (an empty name) falls
+    // back to the url-derived name
+    const filename = contentFilename || new URL(contentUrl, location.href).pathname.split('/').pop();
     const data = filename.toLowerCase() === 'meta.json' ? await (await contents).json() : undefined;
     const asset = new Asset(filename, 'gsplat', { url: contentUrl, filename, contents: c }, data);`;
 
   const patchedSnippet = `const loadGsplat = async (app, config, progressCallback) => {
-    const { contents, contentUrl, unified, aa, reorder, sceneTransform } = config;
+    const { contents, contentUrl, contentFilename, unified, aa, reorder, sceneTransform } = config;
     const c = contents;
-    const filename = new URL(contentUrl, location.href).pathname.split('/').pop();
+    const filename = contentFilename || new URL(contentUrl, location.href).pathname.split('/').pop();
     const data = filename.toLowerCase() === 'meta.json' ? await (await contents).json() : {};
     if (data && data.reorder === undefined) {
         data.reorder = reorder ?? true;
@@ -250,7 +253,6 @@ const patchViewerScript = (scriptSource) => {
 
   const softSplatWgslFragmentAnchor = `		if (alpha < half(uniform.alphaClipForward)) {
 			discard;
-			return output;
 		}`;
 
   const softSplatWgslFragmentPatched = `		// Desktop viewer matches SuperSplat Editor: do not discard low-alpha forward fragments.

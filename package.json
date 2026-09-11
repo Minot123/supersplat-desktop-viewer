@@ -1,7 +1,7 @@
 {
   "name": "supersplat-desktop-viewer",
   "private": true,
-  "version": "0.2.33",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "version:bump": "node scripts/bump-version.mjs patch",
@@ -18,7 +18,7 @@
     "dist": "npm run version:bump && scripts\\run-tauri.cmd build"
   },
   "dependencies": {
-    "@playcanvas/supersplat-viewer": "^1.26.3",
+    "@playcanvas/supersplat-viewer": "^1.31.2",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1"
   },

@@ -157,7 +157,9 @@ const desktopBridgeScript = `<script>
   const getDesktopLoadedSplatCount = () => {
     try {
       const splats = window.scene?.events?.invoke?.('scene.allSplats') ?? [];
-      return splats.reduce((total, splat) => total + (splat?.splatData?.numSplats ?? 0), 0);
+      return splats.reduce((total, splat) => total + (
+        splat?.instances?.count ?? splat?.numSplats ?? splat?.splatData?.numSplats ?? 0
+      ), 0);
     } catch {
       return 0;
     }
@@ -166,6 +168,20 @@ const desktopBridgeScript = `<script>
   const assertDesktopProjectReadyToSave = () => {
     if (getDesktopLoadedSplatCount() <= 0) {
       throw new Error('Desktop project is still loading; wait until splats appear before saving.');
+    }
+  };
+
+  const saveDesktopSsproj = async (value) => {
+    assertDesktopProjectReadyToSave();
+    const bytes = await toUint8Array(value);
+    const response = await fetch(streamUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/x-supersplat' },
+      body: new Blob([bytes], { type: 'application/x-supersplat' })
+    });
+
+    if (!response.ok) {
+      throw new Error('Desktop project save failed: ' + response.status + ' ' + response.statusText);
     }
   };
 
@@ -211,25 +227,15 @@ const desktopBridgeScript = `<script>
         }
         closed = true;
 
-        assertDesktopProjectReadyToSave();
-
-        const blob = new Blob(chunks, { type: 'application/x-supersplat' });
-        const response = await fetch(streamUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/x-supersplat' },
-          body: blob
-        });
-
-        if (!response.ok) {
-          throw new Error('Desktop project save failed: ' + response.status + ' ' + response.statusText);
-        }
-
+        await saveDesktopSsproj(new Blob(chunks, { type: 'application/x-supersplat' }));
         chunks.length = 0;
       }
     };
   };
 
   if (streamUrl && sourcePath.toLowerCase().endsWith('.ssproj')) {
+    window.__desktopSaveSsproj = saveDesktopSsproj;
+    window.showDirectoryPicker = undefined;
     window.showSaveFilePicker = async (options) => {
       if (!isSsprojSaveOptions(options)) {
         if (nativeShowSaveFilePicker) {
@@ -330,17 +336,16 @@ const desktopBridgeScript = `<script>
   const getSceneSplat = () => {
     const scene = window.scene;
     const splatsByType = scene?.getElementsByType?.('splat') ?? [];
-    const splat = splatsByType.find?.((element) => (
+    const isSplatLayer = (element) => (
       element?.type === 'splat' &&
-      element?.splatData &&
-      element?.entity?.gsplat &&
+      element?.entity &&
+      (
+        (element?.instances && element?.resource) ||
+        (element?.splatData && element?.entity?.gsplat)
+      ) &&
       typeof element.move === 'function'
-    )) ?? scene?.elements?.find?.((element) => (
-      element?.type === 'splat' &&
-      element?.splatData &&
-      element?.entity?.gsplat &&
-      typeof element.move === 'function'
-    ));
+    );
+    const splat = splatsByType.find?.(isSplatLayer) ?? scene?.elements?.find?.(isSplatLayer);
     return splat && splat.entity ? splat : null;
   };
 
@@ -448,6 +453,11 @@ const desktopBridgeScript = `<script>
     );
     const scaleValue = Number.isFinite(transform.scale) ? transform.scale : currentScale?.x ?? 1;
     const scale = new Vec3Ctor(scaleValue, scaleValue, scaleValue);
+    const sameVector = (a, b) => Math.abs(a.x - b.x) < 1e-7 && Math.abs(a.y - b.y) < 1e-7 && Math.abs(a.z - b.z) < 1e-7;
+    const rotationDot = currentRotation.x * rotation.x + currentRotation.y * rotation.y + currentRotation.z * rotation.z + currentRotation.w * rotation.w;
+    if (sameVector(currentPosition, position) && sameVector(currentScale, scale) && Math.abs(Math.abs(rotationDot) - 1) < 1e-7) {
+      return getSceneTransform() ?? transform;
+    }
     splat.move(position, rotation, scale);
     scene.boundDirty = true;
     scene.forceRender = true;
@@ -527,7 +537,21 @@ const desktopBridgeScript = `<script>
   window.__desktopSetInitialCameraPose = setInitialCameraPose;
   window.__desktopResetCamera = resetCamera;
   window.__desktopFrameScene = frameScene;
-  window.__desktopGetSceneStats = () => ({ numSplats: getDesktopLoadedSplatCount() });
+  let firstFrameRendered = false;
+  let loadError = null;
+  const startedAt = performance.now();
+  window.addEventListener('error', (event) => { loadError = event.message; });
+  window.addEventListener('unhandledrejection', (event) => { loadError = String(event.reason?.message ?? event.reason); });
+  window.__desktopGetSceneStats = () => ({ numSplats: getDesktopLoadedSplatCount(), firstFrameRendered, loadError });
+  window.__desktopReleaseScene = () => {
+    // Do not destroy layers whose asynchronous add is still in progress.
+    if (firstFrameRendered) {
+      stopStickyCameraPose();
+      stopStickySceneTransform();
+      window.scene?.events?.fire('scene.clear');
+      firstFrameRendered = false;
+    }
+  };
 
   const ensureSceneHooks = () => {
     if (sceneHooksAttached) {
@@ -542,10 +566,14 @@ const desktopBridgeScript = `<script>
     }
 
     sceneHooksAttached = true;
+    events.on('postrender', () => {
+      if (!firstFrameRendered && getDesktopLoadedSplatCount() > 0) {
+        firstFrameRendered = true;
+        console.info('[desktop-load] first rendered scene', { elapsedMs: performance.now() - startedAt, numSplats: getDesktopLoadedSplatCount() });
+      }
+    });
 
     events.on('scene.boundChanged', () => {
-      refreshStickyCameraPose(120);
-      refreshStickySceneTransform(120);
       applyCameraPose();
       applySceneTransform();
     });
@@ -567,7 +595,6 @@ const desktopBridgeScript = `<script>
   };
 
   const applyDesktopOverrides = () => {
-    replaceMatchingText();
     applyViewerOnlyRenderSettings();
     tryApplyCameraPose();
     applySceneTransform();
@@ -598,6 +625,7 @@ const desktopBridgeScript = `<script>
   };
 
   const observer = new MutationObserver(() => {
+    replaceMatchingText();
     applyDesktopOverrides();
     injectViewerButton();
   });
@@ -614,6 +642,7 @@ const desktopBridgeScript = `<script>
       attributes: true,
       attributeFilter: ['title', 'aria-label']
     });
+    replaceMatchingText();
     applyDesktopOverrides();
     injectViewerButton();
   };
@@ -636,7 +665,7 @@ const desktopBridgeScript = `<script>
     rafAttempts += 1;
     if (
       (
-        sourcePath ||
+        !sceneHooksAttached ||
         (cameraPose && !userMovedCamera && stickyCameraFramesRemaining > 0) ||
         (sceneTransform && !userMovedScene && stickySceneTransformFramesRemaining > 0)
       ) &&
@@ -679,36 +708,14 @@ const patchIndexHtml = async () => {
 const patchIndexJs = async () => {
   const indexJsPath = path.join(editorDir, 'index.js');
   const original = await readFile(indexJsPath, 'utf8');
-  const ssprojArrayBufferImport =
-    'if(o.endsWith(".ssproj"))await e.invoke("doc.load",t[s].contents??(await fetch(t[s].url)).arrayBuffer(),t[s].handle);';
-  const ssprojFileImport =
-    'if(o.endsWith(".ssproj")){let l=t[s].contents;if(!l){const n=await fetch(t[s].url),i=await n.arrayBuffer();l=new File([new Uint8Array(i)],t[s].filename||"scene.ssproj",{type:n.headers.get("content-type")||"application/x-supersplat"})}await e.invoke("doc.load",l,t[s].handle)}';
-  const docLoadBlobSource =
-    'r=async n=>{e.fire("startSpinner");const s=new QC(n),i=new Lb(s);try{a();';
-  const docLoadNormalizedBlobSource =
-    'r=async n=>{e.fire("startSpinner");n=typeof n?.size=="number"?n:new File([n instanceof ArrayBuffer?new Uint8Array(n):ArrayBuffer.isView(n)?new Uint8Array(n.buffer,n.byteOffset,n.byteLength):new Uint8Array(await n.arrayBuffer())],"scene.ssproj",{type:"application/x-supersplat"});const s=new QC(n),i=new Lb(s);try{a();';
-  const savedSplatNamesSource = 'splats:s.map(t=>t.docSerialize())';
-  const savedSplatNamesNormalized =
-    'splats:s.map((t,e)=>({...t.docSerialize(),name:`splat_${e}.ply`}))';
+  const browserDownloadCloseSource = 'close(){this.innerWriter.close();const t=this.memFs.results.get(this.filename);t&&((t,e)=>{const n=new Blob([t],{type:"application/octet-stream"}),s=window.URL.createObjectURL(n),i=document.createElement("a");if(i.download=e,i.href=s,document.createEvent){const t=document.createEvent("MouseEvents");t.initMouseEvent("click",!0,!0,window,0,0,0,0,0,!1,!1,!1,!1,0,null),i.dispatchEvent(t)}else i.fireEvent?.("onclick");window.URL.revokeObjectURL(s)})(t,this.filename)}';
+  const desktopDownloadCloseSource = 'async close(){this.innerWriter.close();const t=this.memFs.results.get(this.filename);if(t&&this.filename.toLowerCase().endsWith(".ssproj")&&window.__desktopSaveSsproj){await window.__desktopSaveSsproj(t,this.filename);return}t&&((t,e)=>{const n=new Blob([t],{type:"application/octet-stream"}),s=window.URL.createObjectURL(n),i=document.createElement("a");if(i.download=e,i.href=s,document.createEvent){const t=document.createEvent("MouseEvents");t.initMouseEvent("click",!0,!0,window,0,0,0,0,0,!1,!1,!1,!1,0,null),i.dispatchEvent(t)}else i.fireEvent?.("onclick");window.URL.revokeObjectURL(s)})(t,this.filename)}';
 
-  if (!original.includes(ssprojArrayBufferImport)) {
-    throw new Error('Could not patch SuperSplat editor .ssproj import path. Upstream bundle changed.');
-  }
-  if (!original.includes(docLoadBlobSource)) {
-    throw new Error('Could not patch SuperSplat editor doc.load input normalization. Upstream bundle changed.');
-  }
-  if (!original.includes(savedSplatNamesSource)) {
-    throw new Error('Could not patch SuperSplat editor saved splat names. Upstream bundle changed.');
+  if (!original.includes(browserDownloadCloseSource)) {
+    throw new Error('Could not patch SuperSplat editor desktop ssproj save path. Upstream bundle changed.');
   }
 
-  await writeFile(
-    indexJsPath,
-    original
-      .replace(ssprojArrayBufferImport, ssprojFileImport)
-      .replace(docLoadBlobSource, docLoadNormalizedBlobSource)
-      .replace(savedSplatNamesSource, savedSplatNamesNormalized),
-    'utf8'
-  );
+  await writeFile(indexJsPath, original.replace(browserDownloadCloseSource, desktopDownloadCloseSource), 'utf8');
 };
 
 const removeIfExists = async (targetPath) => {

@@ -17,9 +17,21 @@ The committed SVG source icon and the generated icon derivatives are based on th
 
 ## Runtime and build dependencies
 
+### PlayCanvas SuperSplat Editor
+
+- Version: `3.1.2`
+- Source commit: `0911f786db652a7700068fe6ccdfe32e24269e1d`
+- PlayCanvas engine: `2.22.1`
+- Upstream project: https://github.com/playcanvas/supersplat
+- License: MIT
+- License file: https://github.com/playcanvas/supersplat/blob/main/LICENSE
+
+This project builds and bundles SuperSplat Editor as the renderer for the primary desktop viewer and editor modes.
+
 ### PlayCanvas SuperSplat Viewer
 
 - Package: `@playcanvas/supersplat-viewer`
+- Version: `1.31.2`
 - Upstream project: https://github.com/playcanvas/supersplat-viewer
 - License: MIT
 - License file: https://github.com/playcanvas/supersplat-viewer/blob/main/LICENSE

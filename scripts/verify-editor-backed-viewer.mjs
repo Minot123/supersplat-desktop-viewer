@@ -75,11 +75,18 @@ const checks = [
   },
   {
     file: 'scripts/prepare-editor.mjs',
-    label: 'Desktop rotation controls target the real splat element, not debug overlays',
+    label: 'Desktop rotation controls target a SuperSplat 3 layer, not debug overlays',
     ok:
       prepareEditor.includes("element?.type === 'splat'") &&
-      prepareEditor.includes('element?.splatData') &&
-      prepareEditor.includes('element?.entity?.gsplat')
+      prepareEditor.includes('element?.instances') &&
+      prepareEditor.includes('element?.resource')
+  },
+  {
+    file: 'scripts/prepare-editor.mjs',
+    label: 'Desktop scene stats read the SuperSplat 3 instance count',
+    ok:
+      prepareEditor.includes('splat?.instances?.count') &&
+      prepareEditor.includes('splat?.numSplats')
   },
   {
     file: 'src/main.ts',
