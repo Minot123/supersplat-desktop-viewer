@@ -6,6 +6,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const mainTs = await readFile(path.join(rootDir, 'src', 'main.ts'), 'utf8');
 const prepareEditor = await readFile(path.join(rootDir, 'scripts', 'prepare-editor.mjs'), 'utf8');
+const modeController = await readFile(path.join(rootDir, 'scripts', 'editor-mode-controller.mjs'), 'utf8');
 
 const checks = [
   {
@@ -53,17 +54,17 @@ const checks = [
     file: 'scripts/prepare-editor.mjs',
     label: 'View-only editor renderer disables grid and bounds overlays inside the canvas',
     ok:
-      prepareEditor.includes("events.fire('grid.setVisible', false)") &&
-      prepareEditor.includes("events.fire('camera.setBound', false)") &&
-      prepareEditor.includes("events.fire('camera.setBoundDimensions', false)") &&
-      prepareEditor.includes("events.fire('camera.setOverlay', false)")
+      modeController.includes("['grid.visible', 'grid.setVisible', false]") &&
+      modeController.includes("['camera.bound', 'camera.setBound', false]") &&
+      modeController.includes("['camera.boundDimensions', 'camera.setBoundDimensions', false]") &&
+      modeController.includes('camera.renderOverlays = false')
   },
   {
     file: 'scripts/prepare-editor.mjs',
-    label: 'View-only editor renderer starts with Fly Camera controls',
+    label: 'View-only editor renderer starts with Orbit Camera controls',
     ok:
-      prepareEditor.includes("events.fire('camera.setControlMode', 'fly')") &&
-      prepareEditor.includes("window.scene.camera.controlMode = 'fly'")
+      modeController.includes("['camera.controlMode', 'camera.setControlMode', 'orbit']") &&
+      modeController.includes("camera.controlMode = 'orbit'")
   },
   {
     file: 'scripts/prepare-editor.mjs',

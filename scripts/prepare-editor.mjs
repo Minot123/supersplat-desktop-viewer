@@ -2,6 +2,7 @@ import { access, cp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/prom
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import packageJson from '../package.json' with { type: 'json' };
+import { createEditorModeController } from './editor-mode-controller.mjs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = path.join(rootDir, 'public');
@@ -25,7 +26,7 @@ const desktopBridgeScript = `<script>
   const params = new URLSearchParams(window.location.search);
   const streamUrl = params.get('load') ?? '';
   const sourcePath = params.get('desktopSourcePath') ?? '';
-  const desktopViewMode = params.get('desktopViewMode') ?? 'editor';
+  let desktopViewMode = params.get('desktopViewMode') ?? 'editor';
   const desktopProjectName = sourcePath.replace(/\\\\/g, '/').split('/').filter(Boolean).pop() || 'scene.ssproj';
   const rawCameraPose = params.get('desktopCameraPose');
   const rawSceneTransform = params.get('desktopSceneTransform');
@@ -50,7 +51,7 @@ const desktopBridgeScript = `<script>
     document.body.dataset.desktopSourcePath = sourcePath;
   }
 
-  if (desktopViewMode === 'viewer') {
+  {
     const style = document.createElement('style');
     const hiddenChromeSelectors = [
       'body[data-desktop-view-mode="viewer"] #app-container > :not(#editor-container)',
@@ -399,24 +400,18 @@ const desktopBridgeScript = `<script>
     ...(nextPose ?? {})
   });
 
-  const applyViewerOnlyRenderSettings = () => {
-    if (desktopViewMode !== 'viewer') {
-      return;
-    }
-
-    const events = window.scene?.events;
-    if (!events?.fire) {
-      return;
-    }
-
-    events.fire('grid.setVisible', false);
-    events.fire('camera.setBound', false);
-    events.fire('camera.setBoundDimensions', false);
-    events.fire('camera.setOverlay', false);
-    events.fire('camera.setControlMode', 'fly');
-    if (window.scene?.camera) {
-      window.scene.camera.controlMode = 'fly';
-    }
+  const modeController = (${createEditorModeController.toString()})(() => window.scene, document.body, desktopViewMode);
+  const applyViewerOnlyRenderSettings = () => modeController.apply();
+  window.__desktopSetViewMode = (mode) => {
+    if (!modeController.setMode(mode)) return false;
+    desktopViewMode = mode;
+    // A live scene must not have its pose or edits overwritten by launch settings.
+    userMovedCamera = true;
+    userMovedScene = true;
+    stickyCameraFramesRemaining = 0;
+    stickySceneTransformFramesRemaining = 0;
+    window.dispatchEvent(new Event('resize'));
+    return true;
   };
 
   const applySceneTransformNow = (transform) => {

@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import packageJson from '../package.json';
 import type { OpenFilePayload } from './shared/files';
+import { resetStartupPreferences, VIEW_PREFERENCE_STORAGE_KEYS as STORAGE_KEYS } from './shared/startup-preferences';
 
 type UiMode = 'viewer' | 'editor';
 type UiState = 'idle' | 'loading' | 'ready' | 'error';
@@ -158,6 +159,7 @@ type EditorLaunchSession = {
 };
 
 type EditorEmbeddedWindow = Window & {
+  __desktopSetViewMode?: (mode: 'viewer' | 'editor') => boolean;
   __desktopReleaseScene?: () => void;
   __desktopGetCameraPose?: () => DesktopInitialCameraPose | null;
   __desktopFrameScene?: () => DesktopInitialCameraPose | null;
@@ -183,9 +185,6 @@ declare global {
 }
 
 const FILE_OPEN_EVENT = 'file-open';
-const STORAGE_KEYS = {
-  initialCameraPose: 'supersplat.desktop.initialCameraPose.v1'
-} as const;
 
 const state = {
   currentFile: null as OpenFilePayload | null,
@@ -2124,7 +2123,28 @@ const openFromDialog = async () => {
   await openFromPayload(payload);
 };
 
+const switchSharedEditorMode = (mode: 'viewer' | 'editor') => {
+  if (!viewerRuntime.editorBacked || !viewerRuntime.activeViewer) return false;
+  if (!getEditorFrameWindow()?.__desktopSetViewMode?.(mode)) return false;
+  state.mode = mode;
+  state.uiState = 'ready';
+  state.message = '';
+  if (mode === 'viewer') {
+    const viewer = getActiveViewer();
+    state.sceneNumSplats = viewer?.getDesktopSceneStats?.()?.numSplats ?? null;
+    rememberSessionRotation(viewer?.getDesktopSceneTransform?.());
+    rememberSessionFov(viewer?.getDesktopCurrentCameraPose?.()?.fov);
+    syncInspectorControlsFromViewer(true);
+  }
+  render();
+  return true;
+};
+
 const closeEditorMode = async () => {
+  if (viewerRuntime.editorBacked) {
+    cleanupAllViewers();
+    await waitForViewerCleanup();
+  }
   if (editorRuntime.activeSession) {
     await editorRuntime.activeSession.dispose();
     editorRuntime.activeSession = null;
@@ -2145,6 +2165,7 @@ const captureEditorCameraPose = () => {
 };
 
 const returnFromEditorToViewer = async () => {
+  if (switchSharedEditorMode('viewer')) return;
   const payload = state.currentFile;
   const editorPose = captureEditorCameraPose();
   await closeEditorMode();
@@ -2159,6 +2180,7 @@ const openEditorInPlace = async () => {
     return;
   }
 
+  if (switchSharedEditorMode('editor')) return;
   await ensureEditorAssets();
 
   let launchSession: EditorLaunchSession | null = null;
@@ -2223,6 +2245,7 @@ const installDragAndDrop = async () => {
 };
 
 const init = async () => {
+  resetStartupPreferences();
   state.inspectorOpen = false;
   applyStaticText();
   applyModelRotationControlsState(DEFAULT_SCENE_TRANSFORM, true);
