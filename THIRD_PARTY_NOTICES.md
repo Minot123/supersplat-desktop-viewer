@@ -19,9 +19,10 @@ The committed SVG source icon and the generated icon derivatives are based on th
 
 ### PlayCanvas SuperSplat Editor
 
-- Version: `3.3.0`
-- Source commit: `f345ae5d667f4134e21be7dec01b09b78893203a`
-- PlayCanvas engine: `2.22.1`
+- Version: `3.5.2`
+- Source commit: `f2a1b4975b4766e0ee0c95e63c2737dc2ecb6e5b`
+- PlayCanvas engine: `2.23.2` (desktop override of upstream `2.23.0`)
+- Splat-transform: `3.9.0`
 - Upstream project: https://github.com/playcanvas/supersplat
 - License: MIT
 - License file: https://github.com/playcanvas/supersplat/blob/main/LICENSE

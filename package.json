@@ -1,24 +1,22 @@
 {
   "name": "supersplat-desktop-viewer",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.5.2",
   "type": "module",
   "scripts": {
-    "version:bump": "node scripts/bump-version.mjs patch",
-    "version:minor": "node scripts/bump-version.mjs minor",
-    "version:major": "node scripts/bump-version.mjs major",
+    "version:sync": "node scripts/bump-version.mjs editor",
     "prepare:viewer": "node scripts/prepare-viewer.mjs",
     "prepare:editor": "node scripts/prepare-editor.mjs",
-    "dev": "npm run prepare:viewer && npm run prepare:editor && vite",
-    "build": "npm run prepare:viewer && npm run prepare:editor && tsc && vite build",
+    "dev": "npm run version:sync && npm run prepare:viewer && npm run prepare:editor && vite",
+    "build": "npm run version:sync && npm run prepare:viewer && npm run prepare:editor && tsc && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev:win": "scripts\\run-tauri.cmd dev",
-    "dist": "npm run version:bump && scripts\\run-tauri.cmd build"
+    "dist": "npm run version:sync && scripts\\run-tauri.cmd build"
   },
   "dependencies": {
-    "@playcanvas/supersplat-viewer": "^1.31.2",
+    "@playcanvas/supersplat-viewer": "1.31.2",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1"
   },

@@ -1,0 +1,10 @@
+{
+  "editor": {
+    "version": "3.5.2",
+    "tag": "v3.5.2",
+    "commit": "f2a1b4975b4766e0ee0c95e63c2737dc2ecb6e5b"
+  },
+  "engine": "2.23.2",
+  "splatTransform": "3.9.0",
+  "standaloneViewer": "1.31.2"
+}

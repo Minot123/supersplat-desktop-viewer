@@ -415,129 +415,204 @@ fn handle_local_http_client(
 ) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_nodelay(true)?;
 
     let mut reader = BufReader::new(stream.try_clone()?);
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line)?;
-
-    if request_line.trim().is_empty() {
-        return Ok(());
-    }
-
-    let mut request_parts = request_line.split_whitespace();
-    let method = request_parts.next().unwrap_or_default();
-    let target = request_parts.next().unwrap_or_default();
-    let mut content_length = None;
-    let mut range = None;
-
+    // Exports gather thousands of ranges. Keep the socket and buffered reader
+    // alive between requests instead of exhausting Windows' ephemeral ports.
     loop {
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        if line == "\r\n" || line == "\n" || line.is_empty() {
-            break;
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line)?;
+
+        if request_line.trim().is_empty() {
+            return Ok(());
         }
 
-        if let Some((name, value)) = line.split_once(':') {
-            if name.eq_ignore_ascii_case("content-length") {
-                content_length = value.trim().parse::<u64>().ok();
+        let mut request_parts = request_line.split_whitespace();
+        let method = request_parts.next().unwrap_or_default();
+        let target = request_parts.next().unwrap_or_default();
+        let version = request_parts.next().unwrap_or_default();
+        let mut content_length = None;
+        let mut range = None;
+        let mut connection_close = false;
+        let mut invalid_length = false;
+        let mut transfer_encoding = false;
+
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line)?;
+            if line == "\r\n" || line == "\n" || line.is_empty() {
+                break;
             }
-            if name.eq_ignore_ascii_case("range") {
-                range = Some(value.trim().to_owned());
+
+            let header = line.trim_end_matches(['\r', '\n']);
+            if let Some((name, value)) = header.split_once(':') {
+                if name.is_empty()
+                    || !name
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+                    || value.bytes().any(|b| (b < 32 && b != b'\t') || b == 127)
+                {
+                    return write_http_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "text/plain",
+                        Some(11),
+                        b"Bad Request",
+                    );
+                }
+                if name.eq_ignore_ascii_case("content-length") {
+                    invalid_length |= content_length.is_some();
+                    content_length = value.trim().parse::<u64>().ok();
+                    invalid_length |= content_length.is_none();
+                }
+                if name.eq_ignore_ascii_case("range") {
+                    range = Some(value.trim().to_owned());
+                }
+                if name.eq_ignore_ascii_case("connection") {
+                    connection_close |= value
+                        .split(',')
+                        .any(|token| token.trim().eq_ignore_ascii_case("close"));
+                }
+                transfer_encoding |= name.eq_ignore_ascii_case("transfer-encoding");
+            } else {
+                return write_http_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    Some(11),
+                    b"Bad Request",
+                );
             }
         }
+
+        // Never treat an unread request body as the next keep-alive request.
+        if invalid_length
+            || transfer_encoding
+            || (!method.eq_ignore_ascii_case("PUT") && content_length.unwrap_or(0) > 0)
+        {
+            return write_http_response(
+                &mut stream,
+                "400 Bad Request",
+                "text/plain",
+                Some(11),
+                b"Bad Request",
+            );
+        }
+
+        if method.eq_ignore_ascii_case("OPTIONS") {
+            return write_http_response(&mut stream, "204 No Content", "text/plain", Some(0), b"");
+        }
+
+        if !method.eq_ignore_ascii_case("GET")
+            && !method.eq_ignore_ascii_case("PUT")
+            && !method.eq_ignore_ascii_case("HEAD")
+        {
+            return write_http_response(
+                &mut stream,
+                "405 Method Not Allowed",
+                "text/plain; charset=utf-8",
+                Some(18),
+                b"Method Not Allowed",
+            );
+        }
+
+        let path = target.split('?').next().unwrap_or_default();
+        let Some(route) = path.strip_prefix("/scene/") else {
+            return write_http_response(
+                &mut stream,
+                "404 Not Found",
+                "text/plain; charset=utf-8",
+                Some(9),
+                b"Not Found",
+            );
+        };
+        let mut route_parts = route.split('/');
+        let Some(session_id_text) = route_parts.next() else {
+            return write_http_response(
+                &mut stream,
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                Some(11),
+                b"Bad Request",
+            );
+        };
+        let Some(token) = route_parts.next() else {
+            return write_http_response(
+                &mut stream,
+                "403 Forbidden",
+                "text/plain; charset=utf-8",
+                Some(9),
+                b"Forbidden",
+            );
+        };
+
+        if token != session_token {
+            return write_http_response(
+                &mut stream,
+                "403 Forbidden",
+                "text/plain; charset=utf-8",
+                Some(9),
+                b"Forbidden",
+            );
+        }
+
+        let Ok(session_id) = session_id_text.parse::<u64>() else {
+            return write_http_response(
+                &mut stream,
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                Some(11),
+                b"Bad Request",
+            );
+        };
+
+        let scene = match streams.lock() {
+            Ok(guard) => guard.get(&session_id).cloned(),
+            Err(_) => None,
+        };
+
+        let Some(scene) = scene else {
+            return write_http_response(
+                &mut stream,
+                "404 Not Found",
+                "text/plain; charset=utf-8",
+                Some(9),
+                b"Not Found",
+            );
+        };
+
+        if method.eq_ignore_ascii_case("PUT") {
+            return save_scene_file_upload(&mut stream, &mut reader, scene, content_length);
+        }
+
+        if let LocalHttpStreamSource::File(path) = &scene.source {
+            let mut file = fs::File::open(path)?;
+            let keep_alive = version == "HTTP/1.1" && !connection_close;
+            http_file::serve(
+                &mut stream,
+                &mut file,
+                &scene.content_type,
+                range.as_deref(),
+                method.eq_ignore_ascii_case("HEAD"),
+                keep_alive,
+            )?;
+            if keep_alive {
+                continue;
+            }
+            return Ok(());
+        }
+        if method.eq_ignore_ascii_case("HEAD") {
+            return write_http_response(
+                &mut stream,
+                "200 OK",
+                &scene.content_type,
+                Some(scene.size_bytes),
+                b"",
+            );
+        }
+        return stream_scene_file(&mut stream, scene);
     }
-
-    if method.eq_ignore_ascii_case("OPTIONS") {
-        return write_http_response(&mut stream, "204 No Content", "text/plain", Some(0), b"");
-    }
-
-    if !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("PUT") && !method.eq_ignore_ascii_case("HEAD") {
-        return write_http_response(
-            &mut stream,
-            "405 Method Not Allowed",
-            "text/plain; charset=utf-8",
-            Some(18),
-            b"Method Not Allowed",
-        );
-    }
-
-    let path = target.split('?').next().unwrap_or_default();
-    let Some(route) = path.strip_prefix("/scene/") else {
-        return write_http_response(
-            &mut stream,
-            "404 Not Found",
-            "text/plain; charset=utf-8",
-            Some(9),
-            b"Not Found",
-        );
-    };
-    let mut route_parts = route.split('/');
-    let Some(session_id_text) = route_parts.next() else {
-        return write_http_response(
-            &mut stream,
-            "400 Bad Request",
-            "text/plain; charset=utf-8",
-            Some(11),
-            b"Bad Request",
-        );
-    };
-    let Some(token) = route_parts.next() else {
-        return write_http_response(
-            &mut stream,
-            "403 Forbidden",
-            "text/plain; charset=utf-8",
-            Some(9),
-            b"Forbidden",
-        );
-    };
-
-    if token != session_token {
-        return write_http_response(
-            &mut stream,
-            "403 Forbidden",
-            "text/plain; charset=utf-8",
-            Some(9),
-            b"Forbidden",
-        );
-    }
-
-    let Ok(session_id) = session_id_text.parse::<u64>() else {
-        return write_http_response(
-            &mut stream,
-            "400 Bad Request",
-            "text/plain; charset=utf-8",
-            Some(11),
-            b"Bad Request",
-        );
-    };
-
-    let scene = match streams.lock() {
-        Ok(guard) => guard.get(&session_id).cloned(),
-        Err(_) => None,
-    };
-
-    let Some(scene) = scene else {
-        return write_http_response(
-            &mut stream,
-            "404 Not Found",
-            "text/plain; charset=utf-8",
-            Some(9),
-            b"Not Found",
-        );
-    };
-
-    if method.eq_ignore_ascii_case("PUT") {
-        return save_scene_file_upload(&mut stream, &mut reader, scene, content_length);
-    }
-
-    if let LocalHttpStreamSource::File(path) = &scene.source {
-        let mut file = fs::File::open(path)?;
-        return http_file::serve(&mut stream, &mut file, &scene.content_type, range.as_deref(), method.eq_ignore_ascii_case("HEAD"));
-    }
-    if method.eq_ignore_ascii_case("HEAD") {
-        return write_http_response(&mut stream, "200 OK", &scene.content_type, Some(scene.size_bytes), b"");
-    }
-    stream_scene_file(&mut stream, scene)
 }
 
 fn normalize_display_path(path: PathBuf) -> PathBuf {
@@ -675,6 +750,124 @@ fn close_local_http_stream(state: State<'_, AppState>, session_id: u64) -> bool 
 #[tauri::command]
 fn report_renderer_error(message: String) {
     eprintln!("renderer error: {message}");
+}
+
+#[cfg(test)]
+mod http_connection_tests {
+    use super::*;
+    use std::net::Shutdown;
+
+    fn exchange(requests: &str) -> String {
+        let file_path = env::temp_dir().join(format!(
+            "supersplat-http-test-{}-{}.ply",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&file_path, b"0123456789").unwrap();
+        let streams = Arc::new(Mutex::new(HashMap::from([(
+            1,
+            LocalHttpStreamSession {
+                content_type: "application/octet-stream",
+                source: LocalHttpStreamSource::File(file_path.clone()),
+                size_bytes: 10,
+            },
+        )])));
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            handle_local_http_client(stream, streams, "test-token").unwrap();
+        });
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        client.write_all(requests.as_bytes()).unwrap();
+        client.shutdown(Shutdown::Write).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        worker.join().unwrap();
+        fs::remove_file(file_path).unwrap();
+        response
+    }
+
+    #[test]
+    fn range_reads_reuse_one_connection() {
+        let first = "GET /scene/1/test-token/test.ply HTTP/1.1\r\nHost: localhost\r\nRange: bytes=0-2\r\n\r\n";
+        let last = "GET /scene/1/test-token/test.ply HTTP/1.1\r\nHost: localhost\r\nRange: bytes=7-9\r\nConnection: close\r\n\r\n";
+        let response = exchange(&format!("{first}{last}"));
+        assert_eq!(
+            response.matches("HTTP/1.1 206").count(),
+            2,
+            "both ranges must be served on the same TCP connection"
+        );
+        assert!(response.contains("Connection: keep-alive\r\n"));
+        assert!(response.contains("\r\n\r\n012HTTP/1.1 206"));
+        assert!(response.ends_with("\r\n\r\n789"));
+    }
+
+    #[test]
+    fn head_and_invalid_range_do_not_desynchronize_connection() {
+        let head = "HEAD /scene/1/test-token/test.ply HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let invalid = "GET /scene/1/test-token/test.ply HTTP/1.1\r\nHost: localhost\r\nRange: bytes=99-\r\n\r\n";
+        let last = "GET /scene/1/test-token/test.ply HTTP/1.1\r\nHost: localhost\r\nRange: bytes=3-4\r\nConnection: close\r\n\r\n";
+        let response = exchange(&format!("{head}{invalid}{last}"));
+        assert!(response.starts_with("HTTP/1.1 200"));
+        assert!(response.contains("\r\n\r\nHTTP/1.1 416"));
+        assert!(response.contains("\r\n\r\nHTTP/1.1 206"));
+        assert!(response.ends_with("\r\n\r\n34"));
+    }
+
+    #[test]
+    fn close_requested_by_client_stops_reuse() {
+        let request = "GET /scene/1/test-token/test.ply HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive, CLOSE\r\n\r\n";
+        assert_eq!(
+            exchange(&format!("{request}{request}"))
+                .matches("HTTP/1.1 200")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn requests_with_unread_bodies_cannot_be_reused() {
+        let request = "GET /scene/1/test-token/test.ply HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\nbody";
+        let response = exchange(request);
+        assert!(response.starts_with("HTTP/1.1 400"));
+        assert!(response.contains("Connection: close"));
+    }
+
+    #[test]
+    fn ambiguous_request_framing_is_rejected() {
+        for headers in [
+            "Content-Length: 4\r\nContent-Length: 0",
+            "Transfer-Encoding: chunked",
+            "Content-Length: invalid",
+            "Content-Length : 4",
+            "Transfer-Encoding : chunked",
+            " Folded: value",
+            "Missing-Colon",
+        ] {
+            let request = format!(
+                "GET /scene/1/test-token/test.ply HTTP/1.1\r\nHost: localhost\r\n{headers}\r\n\r\n"
+            );
+            assert!(exchange(&request).starts_with("HTTP/1.1 400"));
+        }
+    }
+
+    #[test]
+    fn http_10_is_not_reused() {
+        let request = "GET /scene/1/test-token/test.ply HTTP/1.0\r\n\r\n";
+        assert_eq!(
+            exchange(&format!("{request}{request}"))
+                .matches("HTTP/1.1 200")
+                .count(),
+            1
+        );
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

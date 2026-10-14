@@ -2,6 +2,7 @@ import { access, cp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/prom
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import packageJson from '../package.json' with { type: 'json' };
+import upstreamVersions from '../upstream-versions.json' with { type: 'json' };
 import { createEditorModeController } from './editor-mode-controller.mjs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -685,6 +686,20 @@ const assertUpstreamBuildExists = async () => {
         'Build it first in scratch/supersplat-upstream via "npm install" and "npm run build".'
       ].join(' ')
     );
+  }
+  const upstreamRoot = path.dirname(upstreamDistDir);
+  const readPackage = async (name) => JSON.parse(await readFile(path.join(upstreamRoot, name), 'utf8'));
+  const editorPackage = await readPackage('package.json');
+  const enginePackage = await readPackage('node_modules/playcanvas/package.json');
+  const transformPackage = await readPackage('node_modules/@playcanvas/splat-transform/package.json');
+  const bundle = await readFile(path.join(upstreamDistDir, 'index.js'), 'utf8');
+  if (packageJson.version !== upstreamVersions.editor.version ||
+      editorPackage.version !== upstreamVersions.editor.version ||
+      enginePackage.version !== upstreamVersions.engine ||
+      transformPackage.version !== upstreamVersions.splatTransform ||
+      !bundle.includes(`"${upstreamVersions.editor.version}"`) ||
+      !bundle.includes(`"${upstreamVersions.engine}"`)) {
+    throw new Error('Editor build/version mismatch. Sync versions and rebuild the pinned editor; see docs/upstream-build.md.');
   }
 };
 

@@ -53,36 +53,31 @@ const writeJson = async (filePath, data) => {
 
 const syncCargoTomlVersion = async (version) => {
   const source = await readFile(cargoTomlPath, 'utf8');
-  const replaced = source.replace(
-    /(\[package\][\s\S]*?version = ")([^"]+)(")/,
-    `$1${version}$3`
-  );
-
-  if (replaced === source) {
+  const pattern = /(\[package\][\s\S]*?version = ")([^"]+)(")/;
+  if (!pattern.test(source)) {
     throw new Error('Unable to update version in Cargo.toml');
   }
-
+  const replaced = source.replace(pattern, `$1${version}$3`);
   await writeFile(cargoTomlPath, replaced, 'utf8');
 };
 
 const syncCargoLockVersion = async (version) => {
   const source = await readFile(cargoLockPath, 'utf8');
-  const replaced = source.replace(
-    /(\[\[package\]\]\r?\nname = "supersplat-desktop-viewer"\r?\nversion = ")([^"]+)(")/,
-    `$1${version}$3`
-  );
-
-  if (replaced === source) {
+  const pattern = /(\[\[package\]\]\r?\nname = "supersplat-desktop-viewer"\r?\nversion = ")([^"]+)(")/;
+  if (!pattern.test(source)) {
     throw new Error('Unable to update version in Cargo.lock');
   }
-
+  const replaced = source.replace(pattern, `$1${version}$3`);
   await writeFile(cargoLockPath, replaced, 'utf8');
 };
 
-const mode = process.argv[2] ?? 'patch';
+const mode = process.argv[2] ?? 'editor';
 
 const packageJson = await readJson(packageJsonPath);
-const nextVersion = getNextVersion(packageJson.version, mode);
+const nextVersion = mode === 'editor'
+  ? (await readJson(path.join(rootDir, 'upstream-versions.json'))).editor.version
+  : getNextVersion(packageJson.version, mode);
+parseVersion(nextVersion);
 
 packageJson.version = nextVersion;
 await writeJson(packageJsonPath, packageJson);
