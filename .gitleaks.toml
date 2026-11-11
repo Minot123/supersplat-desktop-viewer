@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "PlayCanvas radix-sort buffer assignment, not an API credential"
+regexTarget = "match"
+regexes = ['''this\.radixSort\.sortedKeys,[A-Za-z_$][A-Za-z0-9_$]*=this\.radixSort\.sortedIndices;''']

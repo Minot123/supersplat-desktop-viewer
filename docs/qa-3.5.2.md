@@ -28,7 +28,7 @@ Using a generated 8,192-Gaussian PLY:
 
 ## Large-Scene Export
 
-Read-only source: `kalyazin.ply`, 744,001,762 bytes, 3,000,000 Gaussians, SH degree 3. Export used the actual editor serialization handler and browser download writer, not a fake output sink.
+Read-only source: a private PLY fixture, 744,001,762 bytes, 3,000,000 Gaussians, SH degree 3. Export used the actual editor serialization handler and browser download writer, not a fake output sink.
 
 | Output | Bytes | Export duration | Reopened Gaussians |
 | --- | ---: | ---: | ---: |
@@ -39,11 +39,7 @@ SOG settings: SH degree 3, one compression iteration, upstream low-opacity/inval
 
 The combined load/export session made 59,552 scene requests over one TCP connection with `Connection: keep-alive`. No failed requests or export errors occurred. Both output files were reopened in the native application and reported `firstFrameRendered: true`, `loadError: null`.
 
-The original source SHA-256 remained unchanged:
-
-```text
-EABEA2801D91317AC0EF75B65960B0FA8461F724D400521157F01A6067ABF435
-```
+The original source SHA-256 remained unchanged. Its name and identifying checksum are retained only in local QA evidence.
 
 ## Project Save Round Trip
 

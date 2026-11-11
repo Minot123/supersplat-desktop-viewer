@@ -31,14 +31,14 @@ Lightweight offline Windows desktop viewer for 3D Gaussian Splat scenes, built w
 
 ## Versions
 
-Desktop versions now match the bundled SuperSplat Editor version. The current build is **3.5.2**, with PlayCanvas Engine **2.23.2** shared by the main Viewer and Editor modes. Rebuilding does not increment the version independently.
+Desktop versions match the bundled SuperSplat Editor version. The current build is **3.8.0**, with PlayCanvas Engine **2.24.0** shared by the main Viewer and Editor modes. Rebuilding does not increment the version independently.
 
 Pinned upstream versions and the editor commit are recorded in [upstream-versions.json](upstream-versions.json). See [upstream build instructions](docs/upstream-build.md) for the engine override and version synchronization workflow.
 
 ## Notes
 
 - Large-scene loading now uses an internal localhost streaming path to avoid the earlier WebView2 crash pattern seen on repeated heavy scene opens
-- `.ssproj` support is runtime-oriented: the viewer opens the embedded scene payload, but does not yet apply editor-specific project metadata.
+- `.ssproj` projects preserve model transforms, committed color edits, camera and view settings when saved and reopened. Plain PLY/SOG exports do not store project-level camera or background settings.
 
 ## License
 

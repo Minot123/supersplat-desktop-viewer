@@ -1,10 +1,11 @@
 {
   "editor": {
-    "version": "3.5.2",
-    "tag": "v3.5.2",
-    "commit": "f2a1b4975b4766e0ee0c95e63c2737dc2ecb6e5b"
+    "version": "3.8.0",
+    "tag": "v3.8.0",
+    "commit": "412d1dfa585bc88b734f41006638fca6cffef4af",
+    "checkout": "supersplat-upstream-3.8.0"
   },
-  "engine": "2.23.2",
-  "splatTransform": "3.9.0",
+  "engine": "2.24.0",
+  "splatTransform": "3.11.1",
   "standaloneViewer": "1.31.2"
 }

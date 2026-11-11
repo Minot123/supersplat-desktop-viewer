@@ -28,3 +28,16 @@ src-tauri/.cargo
 *.njsproj
 *.sln
 *.sw?
+
+# Private configuration, diagnostics and generated release artifacts
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.dmp
+*.pdb
+/scratch/
+/release*/

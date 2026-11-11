@@ -1,14 +1,15 @@
-import { access, cp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import packageJson from '../package.json' with { type: 'json' };
 import upstreamVersions from '../upstream-versions.json' with { type: 'json' };
 import { createEditorModeController } from './editor-mode-controller.mjs';
+import { verifyUpstreamBuild } from './upstream-build-state.mjs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = path.join(rootDir, 'public');
 const editorDir = path.join(publicDir, 'editor');
-const upstreamDistDir = path.resolve(rootDir, '..', 'scratch', 'supersplat-upstream', 'dist');
+const upstreamDistDir = path.resolve(rootDir, '..', 'scratch', upstreamVersions.editor.checkout, 'dist');
 
 const desktopBridgeScript = `<script>
 (() => {
@@ -175,11 +176,11 @@ const desktopBridgeScript = `<script>
 
   const saveDesktopSsproj = async (value) => {
     assertDesktopProjectReadyToSave();
-    const bytes = await toUint8Array(value);
+    const body = value instanceof Blob ? value : new Blob([await toUint8Array(value)], { type: 'application/x-supersplat' });
     const response = await fetch(streamUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/x-supersplat' },
-      body: new Blob([bytes], { type: 'application/x-supersplat' })
+      body
     });
 
     if (!response.ok) {
@@ -214,7 +215,7 @@ const desktopBridgeScript = `<script>
 
         const payload = value?.type === 'write' ? value.data : value;
         const bytes = await toUint8Array(payload);
-        chunks.push(bytes.slice());
+        chunks.push(new Blob([bytes]));
         cursor += bytes.byteLength;
       },
       async truncate(size) {
@@ -683,7 +684,7 @@ const assertUpstreamBuildExists = async () => {
       [
         'Upstream SuperSplat editor build was not found.',
         `Expected files under: ${upstreamDistDir}`,
-        'Build it first in scratch/supersplat-upstream via "npm install" and "npm run build".'
+        'Build the pinned checkout with "npm run build:editor"; see docs/upstream-build.md.'
       ].join(' ')
     );
   }
@@ -718,14 +719,11 @@ const patchIndexHtml = async () => {
 const patchIndexJs = async () => {
   const indexJsPath = path.join(editorDir, 'index.js');
   const original = await readFile(indexJsPath, 'utf8');
-  const browserDownloadCloseSource = 'close(){this.innerWriter.close();const t=this.memFs.results.get(this.filename);t&&((t,e)=>{const n=new Blob([t],{type:"application/octet-stream"}),s=window.URL.createObjectURL(n),i=document.createElement("a");if(i.download=e,i.href=s,document.createEvent){const t=document.createEvent("MouseEvents");t.initMouseEvent("click",!0,!0,window,0,0,0,0,0,!1,!1,!1,!1,0,null),i.dispatchEvent(t)}else i.fireEvent?.("onclick");window.URL.revokeObjectURL(s)})(t,this.filename)}';
-  const desktopDownloadCloseSource = 'async close(){this.innerWriter.close();const t=this.memFs.results.get(this.filename);if(t&&this.filename.toLowerCase().endsWith(".ssproj")&&window.__desktopSaveSsproj){await window.__desktopSaveSsproj(t,this.filename);return}t&&((t,e)=>{const n=new Blob([t],{type:"application/octet-stream"}),s=window.URL.createObjectURL(n),i=document.createElement("a");if(i.download=e,i.href=s,document.createEvent){const t=document.createEvent("MouseEvents");t.initMouseEvent("click",!0,!0,window,0,0,0,0,0,!1,!1,!1,!1,0,null),i.dispatchEvent(t)}else i.fireEvent?.("onclick");window.URL.revokeObjectURL(s)})(t,this.filename)}';
-
-  if (!original.includes(browserDownloadCloseSource)) {
-    throw new Error('Could not patch SuperSplat editor desktop ssproj save path. Upstream bundle changed.');
+  // The save hook is patched in TypeScript before bundling, not by matching
+  // minifier-generated variable names which change with upstream dependencies.
+  if (!original.includes('__desktopSaveSsproj')) {
+    throw new Error('Editor desktop save hook missing. Apply the upstream patch and rebuild the editor.');
   }
-
-  await writeFile(indexJsPath, original.replace(browserDownloadCloseSource, desktopDownloadCloseSource), 'utf8');
 };
 
 const removeIfExists = async (targetPath) => {
@@ -735,6 +733,9 @@ const removeIfExists = async (targetPath) => {
 };
 
 const trimEditorAssets = async () => {
+  for (const name of await readdir(editorDir, { recursive: true })) {
+    if (name.endsWith('.map')) await unlink(path.join(editorDir, name));
+  }
   await removeIfExists(path.join(editorDir, 'index.js.map'));
   await removeIfExists(path.join(editorDir, 'sw.js'));
   await removeIfExists(path.join(editorDir, 'sw.js.map'));
@@ -751,6 +752,7 @@ const trimEditorAssets = async () => {
 };
 
 const main = async () => {
+  await verifyUpstreamBuild();
   await assertUpstreamBuildExists();
   await mkdir(publicDir, { recursive: true });
   await rm(editorDir, { recursive: true, force: true });

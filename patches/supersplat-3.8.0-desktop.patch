@@ -1,0 +1,182 @@
+diff --git a/src/color-grade.ts b/src/color-grade.ts
+index ac60f63..9662987 100644
+--- a/src/color-grade.ts
++++ b/src/color-grade.ts
+@@ -116,7 +116,7 @@ const gradeFromRows = (rows: Float32Array, transparency: number, out: GradeTerms
+ 
+ // `out` = `second` applied after `first`. Matrices multiply, the offset carries
+ // through the second matrix, and transparency composes multiplicatively because
+-// it is a factor on the sigmoid-domain alpha (see applyAlpha).
++// it is a factor on the linear alpha (see applyAlpha).
+ const composeGrades = (first: GradeTerms, second: GradeTerms, out: GradeTerms): GradeTerms => {
+     const a = second.m;
+     const b = first.m;
+@@ -193,11 +193,11 @@ class ColorGrade {
+     }
+ 
+     applyOpacity(o: number): number {
+-        return invSigmoid(sigmoid(o) * this.transparency);
++        return o * this.transparency;
+     }
+ 
+     applyAlpha(o: number): number {
+-        return sigmoid(o) * this.transparency;
++        return o * this.transparency;
+     }
+ }
+ 
+diff --git a/src/editor-splat-resource.ts b/src/editor-splat-resource.ts
+index 3a7648a..63befc3 100644
+--- a/src/editor-splat-resource.ts
++++ b/src/editor-splat-resource.ts
+@@ -254,7 +254,8 @@ class EditorSplatResource extends GSplatContainer {
+             packed[dst] = FloatPacking.float2Half(color[col] * SH_C0 + 0.5);
+             packed[dst + 1] = FloatPacking.float2Half(color[col + 1] * SH_C0 + 0.5);
+             packed[dst + 2] = FloatPacking.float2Half(color[col + 2] * SH_C0 + 0.5);
+-            packed[dst + 3] = FloatPacking.float2Half(1 / (1 + Math.exp(-geometric[i * 8 + 7])));
++            // splat-transform 3.11+ returns linear opacity, not PLY logits.
++            packed[dst + 3] = FloatPacking.float2Half(geometric[i * 8 + 7]);
+         }
+     }
+ 
+diff --git a/src/io/write/browser-file-system.ts b/src/io/write/browser-file-system.ts
+index 00f78e4..4c68b69 100644
+--- a/src/io/write/browser-file-system.ts
++++ b/src/io/write/browser-file-system.ts
+@@ -3,7 +3,6 @@
+  * Provides FileSystem abstraction for browser file operations.
+  */
+ 
+-import { MemoryFileSystem } from '@playcanvas/splat-transform';
+ import type { FileSystem, Writer } from '@playcanvas/splat-transform';
+ 
+ /**
+@@ -48,8 +47,7 @@ class BrowserFileWriter implements Writer {
+ /**
+  * Trigger a browser download for the given data.
+  */
+-const triggerDownload = (data: Uint8Array, filename: string): void => {
+-    const blob = new Blob([data as BlobPart], { type: 'application/octet-stream' });
++const triggerDownload = (blob: Blob, filename: string): void => {
+     const url = window.URL.createObjectURL(blob);
+ 
+     const lnk = document.createElement('a');
+@@ -71,11 +69,13 @@ const triggerDownload = (data: Uint8Array, filename: string): void => {
+ 
+ /**
+  * Writer implementation that triggers a browser download on close.
+- * Uses MemoryFileSystem internally for efficient buffer management.
++ * Snapshots each reusable input chunk into Blob storage without allocating a
++ * second, contiguous whole-file ArrayBuffer when the download is finalized.
+  */
+ class BrowserDownloadWriter implements Writer {
+-    private memFs: MemoryFileSystem;
+-    private innerWriter: Writer;
++    private parts: Blob[] = [];
++    private cursor = 0;
++    private closed = false;
+     private filename: string;
+ 
+     constructor(
+@@ -83,31 +83,42 @@ class BrowserDownloadWriter implements Writer {
+         private signal?: AbortSignal
+     ) {
+         this.filename = filename;
+-        this.memFs = new MemoryFileSystem();
+-        this.innerWriter = this.memFs.createWriter(filename);
+     }
+ 
+     get bytesWritten(): number {
+-        return this.innerWriter.bytesWritten;
++        return this.cursor;
+     }
+ 
+     write(data: Uint8Array): void {
+         this.signal?.throwIfAborted();
+-        this.innerWriter.write(data);
++        if (this.closed) throw new Error('Download writer is closed');
++        this.parts.push(new Blob([data as BlobPart]));
++        this.cursor += data.byteLength;
+     }
+ 
+-    close(): void {
++    async close(): Promise<void> {
++        if (this.closed) return;
+         this.signal?.throwIfAborted();
+-        this.innerWriter.close();
+-        const data = this.memFs.results.get(this.filename);
+-        if (data) {
+-            triggerDownload(data, this.filename);
++        this.closed = true;
++        const data = new Blob(this.parts, { type: 'application/octet-stream' });
++        this.parts.length = 0;
++        const desktopSave = (
++            window as Window & {
++                __desktopSaveSsproj?: (data: Blob, filename: string) => Promise<void>;
++            }
++        ).__desktopSaveSsproj;
++        if (this.filename.toLowerCase().endsWith('.ssproj') && desktopSave) {
++            await desktopSave(data, this.filename);
++            return;
+         }
++        triggerDownload(data, this.filename);
+     }
+ 
+     abort(): void {
+         // discard buffered data without triggering a download
+-        this.innerWriter.abort();
++        this.parts.length = 0;
++        this.cursor = 0;
++        this.closed = true;
+     }
+ }
+ 
+diff --git a/src/splat-serialize.ts b/src/splat-serialize.ts
+index e0961f2..c77c71e 100644
+--- a/src/splat-serialize.ts
++++ b/src/splat-serialize.ts
+@@ -27,7 +27,7 @@ import { defaultPostEffectSettings } from '@playcanvas/splat-transform/viewer-se
+ import type { AnimTrack, Camera, ExperienceSettings } from '@playcanvas/splat-transform/viewer-settings';
+ import { Mat3, Mat4, PIXELFORMAT_BGRA8, Quat, Texture, Vec3, WebgpuGraphicsDevice } from 'playcanvas';
+ 
+-import { ColorGrade, createGradeTerms, dcDecode, dcEncode, sigmoid } from './color-grade';
++import { ColorGrade, createGradeTerms, dcDecode, dcEncode } from './color-grade';
+ import { effectiveModel } from './editor-splat-resource';
+ import type { AntiAliasMode, EditorSplatResource } from './editor-splat-resource';
+ import type { Events } from './events';
+@@ -230,7 +230,7 @@ const validGeometric = (chunk: ChunkData, row: number) => {
+     for (let i = 4; i < 7; ++i) {
+         if (!Number.isFinite(values[i]) && values[i] !== -Infinity) return false;
+     }
+-    return !Number.isNaN(values[7]);
++    return Number.isFinite(values[7]);
+ };
+ 
+ const validOther = (chunk: ChunkData, row: number) => {
+@@ -290,7 +290,7 @@ const filteredIndices = async (splat: Splat, settings: SerializeSettings) => {
+                     const instance = ordered[slot];
+                     if (onlySelected && state[instance] !== State.selected) continue;
+                     const i = splat.instances.sourceRow[instance] - base;
+-                    if (minOpacity > 0 && sigmoid(opacity[i * 8 + 7]) < minOpacity) continue;
++                    if (minOpacity > 0 && opacity[i * 8 + 7] < minOpacity) continue;
+                     if (
+                         removeInvalid &&
+                         (!validFloatLayer(position, i) ||
+@@ -362,6 +362,17 @@ class SuperSplatChunkSource implements ChunkSource {
+             chunkSize: EXPORT_CHUNK_SIZE,
+             numChunks: [numChunks],
+             shBands: outputBands as SHBands,
++            // Tell the writer when logit PLY would lose opacity above one.
++            // Palette entries are few; avoid scanning millions of instances.
++            opacityAboveOne: entries.some(({ splat }) => {
++                if (splat.resource.source.meta.opacityAboveOne) return true;
++                const terms = createGradeTerms();
++                for (let i = 0; i < splat.colorPalette.size; ++i) {
++                    splat.colorPalette.getEntry(i, terms);
++                    if (terms.transparency > 1) return true;
++                }
++                return false;
++            }),
+             // the trained-model tag of the exported layers, as the view renders
+             // them. No format can hold two, so layers that disagree are written
+             // untagged, as splat-transform's own concat does; empty layers

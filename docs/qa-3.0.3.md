@@ -4,7 +4,7 @@ Tested on Windows in the native Tauri/WebView2 application with an isolated QA p
 
 ## Reproduction
 
-- Source: `kalyazin.ply`, binary little-endian PLY, 3,000,000 Gaussians, SH degree 3, 744,001,762 bytes.
+- Source: a private binary little-endian PLY fixture, 3,000,000 Gaussians, SH degree 3, 744,001,762 bytes.
 - Installed 3.0.2 failed during PLY export at approximately 247,465,414 output bytes after 31.3 seconds. Chromium reported `net::ERR_NO_BUFFER_SPACE`.
 - The local server closed every range request's TCP connection. Windows showed 13,319 localhost sockets in TIME_WAIT; the configured ephemeral TCP range contained 16,384 ports.
 - The error was therefore reproduced with the original file still present and readable. It was not caused by a renamed or missing source file.
@@ -18,17 +18,7 @@ Tested on Windows in the native Tauri/WebView2 application with an isolated QA p
 - Both exported files were reopened through native file-open IPC in the final 3.0.3 build. PLY: 3,000,000 Gaussians; SOG: 2,994,508 Gaussians after the enabled export filtering. Both reported `firstFrameRendered: true` and `loadError: null`.
 - An earlier SOG attempt was interrupted by the user closing the test window; it was not an application crash.
 
-The source was read only. Its size, modification time and SHA-256 remained unchanged:
-
-```text
-EABEA2801D91317AC0EF75B65960B0FA8461F724D400521157F01A6067ABF435
-```
-
-The exported SOG SHA-256 is:
-
-```text
-5F4ABE8763416D296ADC747D2E43E784C9A8C24922F42940685CD94E15083238
-```
+The source was read only. Its size, modification time and SHA-256 remained unchanged. Model names and identifying checksums are retained only in local QA evidence.
 
 ## Automated Checks And Packaging
 

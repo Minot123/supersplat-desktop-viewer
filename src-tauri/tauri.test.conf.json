@@ -1,0 +1,18 @@
+{
+  "productName": "SuperSplat Desktop Viewer Test",
+  "identifier": "com.antigravity.supersplatdesktop.test380",
+  "app": {
+    "windows": [
+      {
+        "title": "SuperSplat Desktop Viewer 3.8.0 TEST",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1080,
+        "minHeight": 720
+      }
+    ]
+  },
+  "bundle": {
+    "fileAssociations": []
+  }
+}
